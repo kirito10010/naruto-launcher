@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>火影忍者Online启动器</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      background: #ffffff; 
+      color: #333; 
+      font-family: 'Microsoft YaHei', sans-serif;
+      min-height: 380px;
+    }
+    .header {
+      padding: 20px;
+      text-align: center;
+      border-bottom: 1px solid #e0e0e0;
+      background: linear-gradient(180deg, #f8f9fa 0%, #ffffff 100%);
+    }
+    .header h1 {
+      font-size: 20px;
+      color: #e74c3c;
+      font-weight: 600;
+    }
+    .game-list {
+      padding: 16px;
+    }
+    .game-item {
+      display: flex;
+      align-items: center;
+      padding: 14px 16px;
+      background: #f5f5f5;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      cursor: pointer;
+      transition: all 0.2s;
+      border: 1px solid #e0e0e0;
+    }
+    .game-item:hover {
+      background: #e8e8e8;
+      border-color: #d0d0d0;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+    .game-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #e74c3c, #c0392b);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      margin-right: 14px;
+      box-shadow: 0 2px 8px rgba(231,76,60,0.25);
+    }
+    .game-info {
+      flex: 1;
+    }
+    .game-info h3 {
+      font-size: 15px;
+      margin-bottom: 4px;
+      color: #222;
+    }
+    .game-info p {
+      font-size: 12px;
+      color: #888;
+    }
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+      font-family: 'Microsoft YaHei', sans-serif;
+      font-weight: 500;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #e74c3c, #c0392b);
+      color: #fff;
+      width: 100%;
+    }
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(231,76,60,0.35);
+    }
+    .add-game {
+      padding: 16px;
+      border-top: 1px solid #e0e0e0;
+    }
+    .btn-add {
+      background: linear-gradient(135deg, #3498db, #2980b9);
+      color: #fff;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .btn-add:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(52,152,219,0.35);
+    }
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.5);
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-overlay.show {
+      display: flex;
+    }
+    .modal {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      width: 320px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    }
+    .modal h2 {
+      font-size: 16px;
+      margin-bottom: 20px;
+      color: #222;
+      text-align: center;
+    }
+    .modal input {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      background: #fff;
+      color: #333;
+      font-size: 14px;
+      margin-bottom: 12px;
+      outline: none;
+      transition: all 0.2s;
+    }
+    .modal input:focus {
+      border-color: #e74c3c;
+      box-shadow: 0 0 0 3px rgba(231,76,60,0.1);
+    }
+    .modal input::placeholder {
+      color: #aaa;
+    }
+    .modal-buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    .btn-cancel {
+      background: #f5f5f5;
+      color: #666;
+      flex: 1;
+    }
+    .btn-cancel:hover {
+      background: #e8e8e8;
+    }
+    .btn-confirm {
+      background: linear-gradient(135deg, #e74c3c, #c0392b);
+      color: #fff;
+      flex: 1;
+    }
+    .btn-confirm:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(231,76,60,0.35);
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🔥 火影忍者Online启动器</h1>
+  </div>
+  
+  <div class="game-list" id="game-list">
+    <div class="game-item" data-url="https://huoying.qq.com/">
+      <div class="game-icon">🎮</div>
+      <div class="game-info">
+        <h3>火影忍者Online</h3>
+        <p>启动游戏</p>
+      </div>
+    </div>
+  </div>
+  
+  <div class="add-game">
+    <button class="btn btn-add" onclick="showAddModal()">+ 添加游戏</button>
+  </div>
+
+  <div class="modal-overlay" id="modal-overlay" onclick="hideAddModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <h2>添加新游戏</h2>
+      <input type="text" id="game-name" placeholder="游戏标题">
+      <input type="text" id="game-url" placeholder="游戏网址">
+      <div class="modal-buttons">
+        <button class="btn btn-cancel" onclick="hideAddModal()">取消</button>
+        <button class="btn btn-confirm" onclick="addGame()">确认添加</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    const fs = require('fs');
+    const path = require('path');
+    
+    const gameList = document.getElementById('game-list');
+    const modalOverlay = document.getElementById('modal-overlay');
+    const userData = require('electron').remote.app.getPath('userData');
+    const gamesFile = path.join(userData, 'games.json');
+    
+    let games = [];
+    
+    function loadGames() {
+      if (fs.existsSync(gamesFile)) {
+        try {
+          const data = fs.readFileSync(gamesFile, 'utf8');
+          games = JSON.parse(data);
+          renderGames();
+        } catch (e) {
+          console.error('加载游戏失败', e);
+        }
+      }
+    }
+    
+    function renderGames() {
+      let html = `
+        <div class="game-item" data-url="https://huoying.qq.com/">
+          <div class="game-icon">🎮</div>
+          <div class="game-info">
+            <h3>火影忍者Online</h3>
+            <p>启动游戏</p>
+          </div>
+        </div>
+      `;
+      
+      games.forEach(game => {
+        html += `
+          <div class="game-item" data-url="${game.url}">
+            <div class="game-icon">🎯</div>
+            <div class="game-info">
+              <h3>${game.name}</h3>
+              <p>启动游戏</p>
+            </div>
+          </div>
+        `;
+      });
+      
+      gameList.innerHTML = html;
+    }
+    
+    function showAddModal() {
+      document.getElementById('game-name').value = '';
+      document.getElementById('game-url').value = '';
+      modalOverlay.classList.add('show');
+    }
+    
+    function hideAddModal() {
+      modalOverlay.classList.remove('show');
+    }
+    
+    function addGame() {
+      const name = document.getElementById('game-name').value.trim();
+      const url = document.getElementById('game-url').value.trim();
+      
+      if (!name || !url) {
+        return;
+      }
+      
+      games.push({ name, url });
+      fs.writeFileSync(gamesFile, JSON.stringify(games));
+      renderGames();
+      hideAddModal();
+    }
+    
+    gameList.addEventListener('click', (e) => {
+      const item = e.target.closest('.game-item');
+      if (item) {
+        const url = item.dataset.url;
+        const name = item.querySelector('h3').textContent;
+        ipcRenderer.send('launch-game', { url, name });
+      }
+    });
+    
+    loadGames();
+  </script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+final-fast/
+release-v*/
+dist-*/
+*.log
+.DS_Store
+Thumbs.db
