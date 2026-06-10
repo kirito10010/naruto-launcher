@@ -2,70 +2,6 @@ const { ipcRenderer } = require('electron');
 
 let speedMultiplier = 1;
 let currentQuality = 'high';
-let speedInterval = null;
-
-function applySpeedToPage(speed) {
-  try {
-    speedMultiplier = speed;
-    
-    if (speed === 1) {
-      console.log('Speed reset to 1x');
-      return;
-    }
-    
-    const speedScript = `
-      (function() {
-        try {
-          window.__speedMultiplier = ${speed};
-          
-          if (!window.__originalDateNow) {
-            window.__originalDateNow = Date.now;
-            window.__originalPerfNow = performance.now.bind(performance);
-            window.__originalSetTimeout = setTimeout.bind(window);
-            window.__originalSetInterval = setInterval.bind(window);
-            window.__originalRequestAnimationFrame = requestAnimationFrame.bind(window);
-            
-            Date.now = function() {
-              return window.__originalDateNow() * window.__speedMultiplier;
-            };
-            
-            performance.now = function() {
-              return window.__originalPerfNow() * window.__speedMultiplier;
-            };
-            
-            window.setTimeout = function(callback, delay) {
-              const adjustedDelay = delay / window.__speedMultiplier;
-              return window.__originalSetTimeout(callback, adjustedDelay);
-            };
-            
-            window.setInterval = function(callback, delay) {
-              const adjustedDelay = delay / window.__speedMultiplier;
-              return window.__originalSetInterval(callback, adjustedDelay);
-            };
-            
-            window.requestAnimationFrame = function(callback) {
-              return window.__originalRequestAnimationFrame(function(timestamp) {
-                callback(timestamp * window.__speedMultiplier);
-              });
-            };
-            
-            console.log('Speed control initialized, multiplier: ' + window.__speedMultiplier);
-          } else {
-            window.__speedMultiplier = ${speed};
-            console.log('Speed multiplier updated: ' + window.__speedMultiplier);
-          }
-        } catch (e) {
-          console.error('Speed control error:', e);
-        }
-      })();
-    `;
-    
-    window.eval(speedScript);
-    console.log('Speed applied to page: ' + speed + 'x');
-  } catch (e) {
-    console.error('applySpeedToPage error:', e);
-  }
-}
 
 function applyQualityToPage(quality) {
   try {
@@ -112,11 +48,6 @@ function applyQualityToPage(quality) {
   }
 }
 
-ipcRenderer.on('set-speed', (event, speed) => {
-  console.log('Received set-speed message:', speed + 'x');
-  applySpeedToPage(speed);
-});
-
 ipcRenderer.on('set-quality', (event, quality) => {
   console.log('Received set-quality message:', quality);
   applyQualityToPage(quality);
@@ -128,9 +59,8 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 window.addEventListener('load', () => {
-  console.log('Page loaded, initializing speed control');
+  console.log('Page loaded');
   setTimeout(() => {
-    applySpeedToPage(speedMultiplier);
     applyQualityToPage(currentQuality);
   }, 1000);
 });

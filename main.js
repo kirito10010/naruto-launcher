@@ -13,7 +13,6 @@ const CURRENT_VERSION = app.getVersion();
 let launcherWindow = null;
 let gameWindows = [];
 let gameWindowCount = 0;
-let sharedSession = null;
 let tray = null;
 
 let speedctlPath = '';
@@ -25,6 +24,7 @@ let isWindows11 = false;
 let hvciStatus = 'unknown';
 
 let currentTheme = 'light';
+let isAudioMuted = false;
 
 let config = {
   theme: 'light',
@@ -59,35 +59,67 @@ function saveConfig() {
 }
 
 function getThemeCSS() {
-  if (currentTheme === 'dark') {
-    return 'background:linear-gradient(180deg,#1a1a1a 0%,#2d2d2d 100%);border-bottom:1px solid #444}.toolbar-left .title,.toolbar-right .btn,.toolbar-right .select-container select,.toolbar-right .control-btn{color:#fff !important;border-color:#555 !important;background:linear-gradient(#333,#444) !important}.separator{background:#555 !important}';
-  }
-  return 'background:linear-gradient(180deg,#fff 0%,#f5f5f5 100%);border-bottom:1px solid #e0e0e0}.toolbar-left .title,.toolbar-right .btn,.toolbar-right .select-container select,.toolbar-right .control-btn{color:#333 !important;border-color:#ddd !important;background:linear-gradient(#fff,#f8f8f8) !important}.separator{background:#ddd !important}';
+  const themes = {
+    light: 'background:linear-gradient(180deg,#ffffff 0%,#f5f5f5 100%);border-bottom:1px solid #e0e0e0}.toolbar-left .title,.toolbar-right .btn,.toolbar-right .select-container select,.toolbar-right .control-btn{color:#333 !important;border-color:#ddd !important;background:linear-gradient(#fff,#f8f8f8) !important}.separator{background:#ddd !important}',
+    dark: 'background:linear-gradient(180deg,#1a1a2e 0%,#16213e 100%);border-bottom:1px solid #4a4a6a}.toolbar-left .title,.toolbar-right .btn,.toolbar-right .select-container select,.toolbar-right .control-btn{color:#fff !important;border-color:#5a5a7a !important;background:linear-gradient(#2d2d44,#3d3d5c) !important}.separator{background:#4a4a6a !important}',
+    blue: 'background:linear-gradient(180deg,#0f3460 0%,#16213e 100%);border-bottom:1px solid #1e4d7b}.toolbar-left .title,.toolbar-right .btn,.toolbar-right .select-container select,.toolbar-right .control-btn{color:#eaeaea !important;border-color:#2e6a9a !important;background:linear-gradient(#1a4a7a,#2a5a8a) !important}.separator{background:#1e4d7b !important}',
+    orange: 'background:linear-gradient(180deg,#2d2d2d 0%,#1a1a1a 100%);border-bottom:1px solid #5a4a3a}.toolbar-left .title,.toolbar-right .btn,.toolbar-right .select-container select,.toolbar-right .control-btn{color:#ffddaa !important;border-color:#6a5a4a !important;background:linear-gradient(#4a3a2a,#5a4a3a) !important}.separator{background:#5a4a3a !important}'
+  };
+  return themes[currentTheme] || themes.light;
 }
 
 function getThemeColors() {
-  if (currentTheme === 'dark') {
-    return {
-      bg1: '#1a1a1a',
-      bg2: '#2d2d2d',
-      border: '#444',
-      text: '#fff',
-      btnBg: '#333',
-      btnHover: '#444',
-      btnBorder: '#555',
-      separator: '#555'
-    };
-  }
-  return {
-    bg1: '#fff',
-    bg2: '#f5f5f5',
-    border: '#e0e0e0',
-    text: '#333',
-    btnBg: '#fff',
-    btnHover: '#f8f8f8',
-    btnBorder: '#ddd',
-    separator: '#ddd'
+  const themes = {
+    light: {
+      bg1: '#ffffff',
+      bg2: '#f5f5f5',
+      border: '#e0e0e0',
+      text: '#333333',
+      btnBg: '#ffffff',
+      btnHover: '#f8f8f8',
+      btnBorder: '#dddddd',
+      separator: '#dddddd',
+      accent: '#3498db',
+      gradient: 'linear-gradient(180deg, #ffffff 0%, #f5f5f5 100%)'
+    },
+    dark: {
+      bg1: '#1a1a2e',
+      bg2: '#16213e',
+      border: '#4a4a6a',
+      text: '#ffffff',
+      btnBg: '#2d2d44',
+      btnHover: '#3d3d5c',
+      btnBorder: '#5a5a7a',
+      separator: '#4a4a6a',
+      accent: '#00d4ff',
+      gradient: 'linear-gradient(180deg, #1a1a2e 0%, #16213e 100%)'
+    },
+    blue: {
+      bg1: '#0f3460',
+      bg2: '#16213e',
+      border: '#1e4d7b',
+      text: '#eaeaea',
+      btnBg: '#1a4a7a',
+      btnHover: '#2a5a8a',
+      btnBorder: '#2e6a9a',
+      separator: '#1e4d7b',
+      accent: '#4ecdc4',
+      gradient: 'linear-gradient(180deg, #0f3460 0%, #16213e 100%)'
+    },
+    orange: {
+      bg1: '#2d2d2d',
+      bg2: '#1a1a1a',
+      border: '#5a4a3a',
+      text: '#ffddaa',
+      btnBg: '#4a3a2a',
+      btnHover: '#5a4a3a',
+      btnBorder: '#6a5a4a',
+      separator: '#5a4a3a',
+      accent: '#ff6b35',
+      gradient: 'linear-gradient(180deg, #2d2d2d 0%, #1a1a1a 100%)'
+    }
   };
+  return themes[currentTheme] || themes.light;
 }
 
 function getResourcePath(...segments) {
@@ -319,31 +351,12 @@ function setSpeedRate(rate) {
     injectAllChildProcesses();
   }
   
-  gameWindows.forEach(({ webContentsId }) => {
-    if (webContentsId) {
-      try {
-        const webContents = require('electron').webContents.fromId(webContentsId);
-        if (webContents) {
-          webContents.send('set-speed', rate);
-        }
-      } catch (e) {
-        log(`发送JS加速指令失败: ${e.message}`, 'WARN');
-      }
-    }
-  });
-  
-  gameWindows.forEach(({ toolbar }) => {
-    if (toolbar && toolbar.webContents) {
-      toolbar.webContents.send('speed-update', rate);
-    }
-  });
-  
   log(`变速率已设置为: ${rate}x`);
 }
 
 function getAllChildProcessesRecursive(parentPid) {
   return new Promise((resolve, reject) => {
-    const psCommand = 'Get-WmiObject -Class Win32_Process -Filter "ParentProcessId=' + parentPid + '" | Select-Object ProcessId,CommandLine | ForEach-Object { Write-Output "ProcessId=$($_.ProcessId)`nCommandLine=$($_.CommandLine)" }';
+    const psCommand = 'Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId=' + parentPid + '" | Select-Object ProcessId,CommandLine | ForEach-Object { Write-Output "ProcessId=$($_.ProcessId)`nCommandLine=$($_.CommandLine)" }';
     
     exec('powershell.exe -Command "' + psCommand + '"', { encoding: 'utf-8', timeout: 5000 }, function (err, stdout) {
       if (err) {
@@ -484,11 +497,20 @@ function createLauncherWindow() {
   <meta charset="UTF-8">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg-gradient: linear-gradient(180deg, #ffffff 0%, #f5f5f5 100%);
+      --text-color: #333;
+      --border-color: #ddd;
+      --btn-bg: linear-gradient(#fff, #f8f8f8);
+      --btn-border: #ddd;
+      --game-bg: #f5f5f5;
+      --accent-color: #e74c3c;
+    }
     body {
-      background: linear-gradient(180deg, #ffffff 0%, #f5f5f5 100%);
+      background: var(--bg-gradient);
       padding: 20px;
       font-family: 'Microsoft YaHei', sans-serif;
-      color: #333;
+      color: var(--text-color);
       height: 100vh;
       display: flex;
       flex-direction: column;
@@ -501,38 +523,49 @@ function createLauncherWindow() {
       align-items: center;
     }
     h2 {
-      color: #333;
+      color: var(--text-color);
       font-size: 18px;
       margin-bottom: 10px;
     }
-    .add-btn {
-      width: 28px;
-      height: 28px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      background: linear-gradient(#fff, #f8f8f8);
-      color: #333;
-      font-size: 16px;
-      cursor: pointer;
-      outline: none;
+    .theme-selector {
       display: flex;
-      align-items: center;
-      justify-content: center;
+      gap: 5px;
+    }
+    .theme-btn {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      cursor: pointer;
       transition: all 0.2s;
       -webkit-app-region: no-drag;
     }
-    .add-btn:hover {
-      border-color: #e74c3c;
-      color: #e74c3c;
-      background: #fff;
+    .theme-btn:hover {
+      transform: scale(1.1);
+    }
+    .theme-btn.active {
+      border-color: var(--accent-color);
+      box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.3);
+    }
+    .theme-light {
+      background: linear-gradient(135deg, #ffffff 50%, #f5f5f5 50%);
+    }
+    .theme-dark {
+      background: linear-gradient(135deg, #1a1a2e 50%, #16213e 50%);
+    }
+    .theme-blue {
+      background: linear-gradient(135deg, #0f3460 50%, #16213e 50%);
+    }
+    .theme-orange {
+      background: linear-gradient(135deg, #2d2d2d 50%, #1a1a1a 50%);
     }
     .game-list {
       flex: 1;
       overflow-y: auto;
     }
     .game-item {
-      background: #f5f5f5;
-      border: 1px solid #ddd;
+      background: var(--game-bg);
+      border: 1px solid var(--border-color);
       border-radius: 8px;
       padding: 15px;
       margin-bottom: 10px;
@@ -541,7 +574,7 @@ function createLauncherWindow() {
       box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
     .game-item:hover {
-      border-color: #e74c3c;
+      border-color: var(--accent-color);
       box-shadow: 0 2px 8px rgba(231, 76, 60, 0.15);
       background: #fff;
     }
@@ -549,7 +582,7 @@ function createLauncherWindow() {
       font-size: 14px;
       font-weight: bold;
       margin-bottom: 5px;
-      color: #333;
+      color: var(--text-color);
     }
     .game-url {
       font-size: 11px;
@@ -558,11 +591,41 @@ function createLauncherWindow() {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .footer {
+      margin-top: auto;
+      display: flex;
+      justify-content: center;
+      padding-bottom: 10px;
+    }
+    .join-group-btn {
+      padding: 8px 20px;
+      background: linear-gradient(135deg, #10b981, #059669);
+      border: none;
+      border-radius: 20px;
+      color: white;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      -webkit-app-region: no-drag;
+    }
+    .join-group-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);
+    }
+    .join-group-btn:active {
+      transform: translateY(0);
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <h2>🎮 火影忍者Online启动器</h2>
+    <div class="theme-selector" id="themeSelector">
+      <button class="theme-btn theme-light" title="明亮主题" data-theme="light"></button>
+      <button class="theme-btn theme-dark" title="暗黑主题" data-theme="dark"></button>
+      <button class="theme-btn theme-blue" title="深海主题" data-theme="blue"></button>
+      <button class="theme-btn theme-orange" title="火影主题" data-theme="orange"></button>
+    </div>
   </div>
   
   <div class="game-list">
@@ -572,17 +635,100 @@ function createLauncherWindow() {
     </div>
   </div>
   
+  <div class="footer">
+    <button class="join-group-btn" onclick="joinQQGroup()">💬 加入QQ群 489455643</button>
+  </div>
+  
   <script>
-    const { ipcRenderer } = require('electron');
+    const { ipcRenderer, shell } = require('electron');
     
     function launchGame(url, name) {
       ipcRenderer.send('launch-game', { url, name });
     }
+    
+    function joinQQGroup() {
+      shell.openExternal('https://qm.qq.com/cgi-bin/qm/qr?k=7vQjZL6e3aL6mJv5Y6Z1aK8kK9d7M2P7');
+    }
+    
+    function setTheme(theme) {
+      ipcRenderer.send('set-theme', theme);
+    }
+    
+    function applyTheme(theme) {
+      const root = document.documentElement;
+      const themes = {
+        light: {
+          '--bg-gradient': 'linear-gradient(180deg, #ffffff 0%, #f5f5f5 100%)',
+          '--text-color': '#333',
+          '--border-color': '#ddd',
+          '--btn-bg': 'linear-gradient(#fff, #f8f8f8)',
+          '--btn-border': '#ddd',
+          '--game-bg': '#f5f5f5',
+          '--accent-color': '#e74c3c'
+        },
+        dark: {
+          '--bg-gradient': 'linear-gradient(180deg, #1a1a2e 0%, #16213e 100%)',
+          '--text-color': '#fff',
+          '--border-color': '#4a4a6a',
+          '--btn-bg': 'linear-gradient(#2d2d44, #3d3d5c)',
+          '--btn-border': '#5a5a7a',
+          '--game-bg': '#2d2d44',
+          '--accent-color': '#00d4ff'
+        },
+        blue: {
+          '--bg-gradient': 'linear-gradient(180deg, #0f3460 0%, #16213e 100%)',
+          '--text-color': '#eaeaea',
+          '--border-color': '#1e4d7b',
+          '--btn-bg': 'linear-gradient(#1a4a7a, #2a5a8a)',
+          '--btn-border': '#2e6a9a',
+          '--game-bg': '#1a4a7a',
+          '--accent-color': '#4ecdc4'
+        },
+        orange: {
+          '--bg-gradient': 'linear-gradient(180deg, #2d2d2d 0%, #1a1a1a 100%)',
+          '--text-color': '#ffddaa',
+          '--border-color': '#5a4a3a',
+          '--btn-bg': 'linear-gradient(#4a3a2a, #5a4a3a)',
+          '--btn-border': '#6a5a4a',
+          '--game-bg': '#4a3a2a',
+          '--accent-color': '#ff6b35'
+        }
+      };
+      const t = themes[theme] || themes.light;
+      Object.keys(t).forEach(key => {
+        root.style.setProperty(key, t[key]);
+      });
+      document.querySelectorAll('.theme-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelector('.theme-' + theme)?.classList.add('active');
+    }
+    
+    function initThemeButtons() {
+      document.querySelectorAll('.theme-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const theme = btn.getAttribute('data-theme');
+          if (theme) {
+            setTheme(theme);
+          }
+        });
+      });
+    }
+    
+    document.addEventListener('DOMContentLoaded', () => {
+      initThemeButtons();
+    });
+    
+    ipcRenderer.on('theme-changed', (event, theme) => {
+      applyTheme(theme);
+    });
   </script>
 </body>
 </html>`;
   
   launcherWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(launcherHtml));
+
+  launcherWindow.webContents.on('did-finish-load', () => {
+    launcherWindow.webContents.send('theme-changed', currentTheme);
+  });
 
   launcherWindow.on('close', (event) => {
     if (gameWindows.length > 0) {
@@ -611,16 +757,14 @@ function createGameWindow(url, gameName) {
   const gameWidth = Math.floor(width * 0.9);
   const gameHeight = Math.floor(height * 0.9);
 
-  if (!sharedSession) {
-    sharedSession = require('electron').session.fromPartition('persist:game-session', {
-      cache: true,
-      storage: 'persist:game-session'
-    });
-    
-    sharedSession.cookies.on('changed', (event, cookie, cause, removed) => {
-      log('Cookie变化: ' + cookie.name + '=' + cookie.value.substring(0, 20) + '... ' + (removed ? '删除' : cause));
-    });
-  }
+  const session = require('electron').session.fromPartition(`persist:game-session-${gameWindowCount}`, {
+    cache: true,
+    storage: `persist:game-session-${gameWindowCount}`
+  });
+  
+  session.cookies.on('changed', (event, cookie, cause, removed) => {
+    log('Cookie变化: ' + cookie.name + '=' + cookie.value.substring(0, 20) + '... ' + (removed ? '删除' : cause));
+  });
 
   const colors = getThemeColors();
   
@@ -739,7 +883,7 @@ function createGameWindow(url, gameName) {
       display: flex;
       align-items: center;
       justify-content: center;
-      -webkit-app-region: no-drag;
+      -webkit-appearance: none;
     }
     .control-btn:hover {
       background: rgba(0,0,0,.05);
@@ -760,16 +904,16 @@ function createGameWindow(url, gameName) {
         <div class="separator"></div>
         <div class="select-container">
           <select id="speed-select">
-            <option value="1" ${currentSpeedRate === 1 ? 'selected' : ''}>1x (还原)</option>
-            <option value="2" ${currentSpeedRate === 2 ? 'selected' : ''}>2x</option>
-            <option value="4" ${currentSpeedRate === 4 ? 'selected' : ''}>4x</option>
-            <option value="6" ${currentSpeedRate === 6 ? 'selected' : ''}>6x</option>
-            <option value="10" ${currentSpeedRate === 10 ? 'selected' : ''}>10x</option>
-            <option value="20" ${currentSpeedRate === 20 ? 'selected' : ''}>20x</option>
+            <option value="1"${currentSpeedRate === 1 ? ' selected' : ''}>1x (还原)</option>
+            <option value="2"${currentSpeedRate === 2 ? ' selected' : ''}>2x</option>
+            <option value="4"${currentSpeedRate === 4 ? ' selected' : ''}>4x</option>
+            <option value="6"${currentSpeedRate === 6 ? ' selected' : ''}>6x</option>
+            <option value="10"${currentSpeedRate === 10 ? ' selected' : ''}>10x</option>
+            <option value="20"${currentSpeedRate === 20 ? ' selected' : ''}>20x</option>
           </select>
         </div>
         <div class="separator"></div>
-        <button class="btn" id="btn-mute" title="切换静音">🔊</button>
+        <button class="btn" id="btn-mute" title="切换静音">${isAudioMuted ? '🔇' : '🔊'}</button>
         <div class="separator"></div>
         <div class="window-controls">
           <button class="control-btn" id="btn-min">-</button>
@@ -779,7 +923,7 @@ function createGameWindow(url, gameName) {
       </div>
   <script>
     const { ipcRenderer } = require('electron');
-    let isMuted = false;
+    let isMuted = ${isAudioMuted ? 'true' : 'false'};
     
     document.getElementById('btn-new-window').addEventListener('click', () => {
       ipcRenderer.send('new-game-window');
@@ -841,7 +985,7 @@ function createGameWindow(url, gameName) {
       preload: path.join(__dirname, 'preload.js'),
       webSecurity: false,
       allowRunningInsecureContent: true,
-      session: sharedSession,
+      session: session,
       enableRemoteModule: false,
       sandbox: false
     }
@@ -878,28 +1022,95 @@ function createGameWindow(url, gameName) {
     log('拦截弹窗(' + frameName + '), 在当前窗口打开: ' + newUrl);
   });
 
-  ipcMain.on('min-window', () => {
-    win.minimize();
-  });
+  const ipcListeners = [];
 
-  ipcMain.on('max-window', () => {
-    if (win.isMaximized()) {
-      win.unmaximize();
-    } else {
-      win.maximize();
+  const addListener = (channel, handler) => {
+    ipcMain.on(channel, handler);
+    ipcListeners.push({ channel, handler });
+  };
+
+  addListener('min-window', (event) => {
+    const senderId = event.sender.id;
+    const windowIndex = gameWindows.findIndex(item => item.toolbar && item.toolbar.webContents && item.toolbar.webContents.id === senderId);
+    
+    if (windowIndex !== -1) {
+      const winToMin = gameWindows[windowIndex].win;
+      if (winToMin && !winToMin.isDestroyed()) {
+        winToMin.minimize();
+      }
     }
   });
 
-  ipcMain.on('close-window', () => {
-    gameContents.destroy();
-    win.close();
+  addListener('max-window', (event) => {
+    const senderId = event.sender.id;
+    const windowIndex = gameWindows.findIndex(item => item.toolbar && item.toolbar.webContents && item.toolbar.webContents.id === senderId);
+    
+    if (windowIndex !== -1) {
+      const winToMax = gameWindows[windowIndex].win;
+      if (winToMax && !winToMax.isDestroyed()) {
+        if (winToMax.isMaximized()) {
+          winToMax.unmaximize();
+        } else {
+          winToMax.maximize();
+        }
+      }
+    }
   });
 
-  ipcMain.on('set-game-speed', (event, speed) => {
-    setSpeedRate(speed);
+  addListener('close-window', (event) => {
+    const senderId = event.sender.id;
+    const windowIndex = gameWindows.findIndex(item => item.toolbar && item.toolbar.webContents && item.toolbar.webContents.id === senderId);
+    
+    if (windowIndex !== -1) {
+      const webContentsId = gameWindows[windowIndex].webContentsId;
+      if (webContentsId) {
+        try {
+          const wc = require('electron').webContents.fromId(webContentsId);
+          if (wc && !wc.isDestroyed()) {
+            wc.destroy();
+          }
+        } catch (e) {
+          log(`销毁游戏内容失败: ${e.message}`, 'WARN');
+        }
+      }
+      
+      const winToClose = gameWindows[windowIndex].win;
+      if (winToClose && !winToClose.isDestroyed()) {
+        winToClose.close();
+      }
+    }
   });
 
-  ipcMain.on('toggle-mute', (event, muted) => {
+  addListener('set-game-speed', (event, speed) => {
+    const senderId = event.sender.id;
+    const windowIndex = gameWindows.findIndex(item => item.toolbar && item.toolbar.webContents && item.toolbar.webContents.id === senderId);
+    
+    if (windowIndex !== -1) {
+      gameWindows[windowIndex].speedRate = speed;
+      log(`窗口${windowIndex + 1} 设置速度: ${speed}x`);
+      
+      currentSpeedRate = speed;
+      config.lastSpeed = speed;
+      saveConfig();
+      
+      if (fs.existsSync(speedctlPath)) {
+        updateNativeRate(speed);
+        injectAllChildProcesses();
+      }
+      
+      gameWindows.forEach(({ win }, idx) => {
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('speed-update', speed);
+          log(`窗口${idx + 1} 速度显示已同步为: ${speed}x`);
+        }
+      });
+      
+      log(`全局变速率已设置为: ${speed}x`);
+    }
+  });
+
+  addListener('toggle-mute', (event, muted) => {
+    isAudioMuted = muted;
     gameWindows.forEach(({ webContentsId }) => {
       if (webContentsId) {
         try {
@@ -918,14 +1129,6 @@ function createGameWindow(url, gameName) {
     createGameWindow(DEFAULT_URL, '火影忍者Online');
   });
 
-  gameContents.on('did-finish-load', () => {
-    log('游戏窗口' + gameWindowCount + ' 加载完成');
-    
-    setTimeout(() => {
-      injectAllChildProcesses();
-    }, 1500);
-  });
-
   win.on('resize', () => {
     const bounds = win.getBounds();
     gameView.setBounds({ x: 0, y: toolbarHeight, width: bounds.width, height: bounds.height - toolbarHeight });
@@ -935,7 +1138,6 @@ function createGameWindow(url, gameName) {
     log('游戏窗口' + gameWindowCount + ' 失去焦点');
     if (gameContents && !gameContents.isDestroyed()) {
       gameContents.setBackgroundThrottling(false);
-      gameContents.setAudioMuted(false);
     }
   });
 
@@ -950,7 +1152,7 @@ function createGameWindow(url, gameName) {
     log('游戏窗口' + gameWindowCount + ' 显示');
     if (gameContents && !gameContents.isDestroyed()) {
       gameContents.setBackgroundThrottling(false);
-      gameContents.setAudioMuted(false);
+      gameContents.setAudioMuted(isAudioMuted);
     }
   });
 
@@ -958,7 +1160,7 @@ function createGameWindow(url, gameName) {
     log('游戏窗口' + gameWindowCount + ' 从最小化恢复');
     if (gameContents && !gameContents.isDestroyed()) {
       gameContents.setBackgroundThrottling(false);
-      gameContents.setAudioMuted(false);
+      gameContents.setAudioMuted(isAudioMuted);
       win.setSize(win.getSize()[0], win.getSize()[1] + 1);
       setTimeout(() => {
         if (!win.isDestroyed()) {
@@ -969,14 +1171,35 @@ function createGameWindow(url, gameName) {
   });
 
   win.on('closed', () => {
+    ipcListeners.forEach(({ channel, handler }) => {
+      ipcMain.removeListener(channel, handler);
+    });
+    
     const index = gameWindows.findIndex(item => item.win === win);
     if (index > -1) {
       gameWindows.splice(index, 1);
     }
     log('游戏窗口' + gameWindowCount + ' 已关闭');
     
-    if (gameWindows.length === 0 && launcherWindow) {
-      launcherWindow.show();
+    if (gameWindows.length === 0) {
+      currentSpeedRate = 1;
+      config.lastSpeed = 1;
+      saveConfig();
+      
+      if (fs.existsSync(speedctlPath)) {
+        updateNativeRate(1);
+      }
+      
+      if (launcherWindow && !launcherWindow.isDestroyed()) {
+        launcherWindow.show();
+        launcherWindow.focus();
+        launcherWindow.setAlwaysOnTop(true);
+        setTimeout(() => {
+          if (!launcherWindow.isDestroyed()) {
+            launcherWindow.setAlwaysOnTop(false);
+          }
+        }, 100);
+      }
     }
   });
 
@@ -984,7 +1207,8 @@ function createGameWindow(url, gameName) {
   gameWindows.push({ 
     win: win, 
     toolbar: win, 
-    webContentsId: gameContents.id 
+    webContentsId: gameContents.id,
+    speedRate: 1 
   });
 
   log('游戏窗口' + gameWindowCount + ' 创建成功, webContentsId=' + gameContents.id);
@@ -1094,14 +1318,6 @@ ipcMain.on('clear-cache', (event) => {
   
   const promises = [];
   
-  if (sharedSession) {
-    promises.push(sharedSession.clearStorageData({
-      storages: ['appcache', 'cookies', 'filesystem', 'indexdb', 'localstorage', 'shadercache', 'websql', 'serviceworkers', 'cacheStorage']
-    }));
-    
-    promises.push(sharedSession.clearCache());
-  }
-  
   gameWindows.forEach(({ webContentsId }) => {
     if (webContentsId) {
       try {
@@ -1156,6 +1372,9 @@ function initAutoUpdater() {
   
   log('初始化自动更新模块，当前版本: ' + CURRENT_VERSION);
   
+  let isShowingUpdateDialog = false;
+  let updateDownloaded = false;
+  
   autoUpdater.setFeedURL({
     provider: 'github',
     owner: 'kirito10010',
@@ -1170,15 +1389,24 @@ function initAutoUpdater() {
     log('发现新版本: ' + info.version);
     log('更新说明: ' + (info.releaseNotes || '无'));
     
+    if (isShowingUpdateDialog || updateDownloaded) {
+      log('已有更新弹窗显示或更新已下载，跳过重复提示');
+      return;
+    }
+    
+    isShowingUpdateDialog = true;
     dialog.showMessageBox({
       type: 'info',
       title: '发现更新',
       message: `发现新版本 ${info.version}\n\n当前版本: ${CURRENT_VERSION}\n\n更新说明: ${info.releaseNotes || '无'}`,
       buttons: ['立即更新', '稍后提醒']
     }).then((result) => {
+      isShowingUpdateDialog = false;
       if (result.response === 0) {
         autoUpdater.downloadUpdate();
       }
+    }).catch(() => {
+      isShowingUpdateDialog = false;
     });
   });
   
@@ -1192,21 +1420,32 @@ function initAutoUpdater() {
   
   autoUpdater.on('update-downloaded', (info) => {
     log('更新包下载完成');
+    updateDownloaded = true;
     
+    if (isShowingUpdateDialog) {
+      log('已有弹窗显示，等待关闭后再显示更新完成提示');
+      return;
+    }
+    
+    isShowingUpdateDialog = true;
     dialog.showMessageBox({
       type: 'info',
       title: '更新完成',
       message: `更新包已下载完成，版本: ${info.version}\n\n请重启应用以应用更新。`,
       buttons: ['立即重启', '稍后重启']
     }).then((result) => {
+      isShowingUpdateDialog = false;
       if (result.response === 0) {
         autoUpdater.quitAndInstall();
       }
+    }).catch(() => {
+      isShowingUpdateDialog = false;
     });
   });
   
   autoUpdater.on('error', (err) => {
     log('自动更新错误: ' + err.message, 'ERROR');
+    isShowingUpdateDialog = false;
   });
   
   setTimeout(() => {
@@ -1220,6 +1459,23 @@ app.whenReady().then(() => {
   detectWindowsVersion();
   initSpeedControl();
   initAutoUpdater();
+  
+  ipcMain.on('set-theme', (event, theme) => {
+    currentTheme = theme;
+    saveConfig();
+    log('主题已切换为: ' + theme);
+    
+    if (launcherWindow && !launcherWindow.isDestroyed()) {
+      launcherWindow.webContents.send('theme-changed', theme);
+    }
+    
+    gameWindows.forEach(({ win }) => {
+      if (win && !win.isDestroyed()) {
+        win.webContents.send('theme-changed', theme);
+      }
+    });
+  });
+  
   createLauncherWindow();
   createTray();
   

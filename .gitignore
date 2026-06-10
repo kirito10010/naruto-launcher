@@ -1,8 +1,45 @@
+# Dependencies
 node_modules/
+
+# Build outputs
 dist/
-final-fast/
 release-v*/
 dist-*/
+*.exe
+*.blockmap
+*.yml
+
+# Logs
 *.log
+
+# System files
 .DS_Store
 Thumbs.db
+*.tmp
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+$RECYCLE.BIN/
+*.bak
+*.backup
+
+# Credentials and secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Electron specific
+*.asar
+app-update.yml
+
+# Cache
+.cache/
+npm-debug.log*
