@@ -1,6 +1,6 @@
 {
   "name": "naruto-online-launcher",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "火影忍者Online页游启动器",
   "main": "main.js",
   "scripts": {
@@ -21,9 +21,9 @@
   },
   "build": {
     "appId": "com.example.naruto-launcher",
-    "productName": "火影忍者Online启动器",
+    "productName": "NarutoOnlineLauncher",
     "directories": {
-      "output": "release-v1.0.1"
+      "output": "release-v1.0.2-new"
     },
     "icon": "resources/icons/Naruto.png",
     "files": [
@@ -46,7 +46,8 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "artifactName": "${productName}-Setup-${version}.exe"
     },
     "nsis": {
       "oneClick": false,

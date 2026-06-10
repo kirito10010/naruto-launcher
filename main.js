@@ -563,7 +563,6 @@ function createLauncherWindow() {
 <body>
   <div class="header">
     <h2>🎮 火影忍者Online启动器</h2>
-    <button class="add-btn" onclick="handleAddGame()" title="添加游戏">+</button>
   </div>
   
   <div class="game-list">
@@ -578,24 +577,6 @@ function createLauncherWindow() {
     
     function launchGame(url, name) {
       ipcRenderer.send('launch-game', { url, name });
-    }
-    
-    function handleAddGame() {
-      ipcRenderer.send('log-message', '启动器点击添加游戏按钮', 'INFO');
-      const title = window.prompt('请输入游戏名称:');
-      if (!title) {
-        ipcRenderer.send('log-message', '用户取消输入游戏名称', 'INFO');
-        return;
-      }
-      
-      const url = window.prompt('请输入游戏网址:', 'https://');
-      if (!url) {
-        ipcRenderer.send('log-message', '用户取消输入游戏网址', 'INFO');
-        return;
-      }
-      
-      ipcRenderer.send('log-message', '添加游戏: ' + title + ' - ' + url, 'INFO');
-      ipcRenderer.send('launch-game', { url, name: title });
     }
   </script>
 </body>
