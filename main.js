@@ -14,6 +14,11 @@ let launcherWindow = null;
 let gameWindows = [];
 let gameWindowCount = 0;
 let tray = null;
+let isQuitting = false;
+
+let logBuffer = [];
+const MAX_LOG_BUFFER = 10;
+const MAX_LOG_FILE_SIZE = 1024 * 1024 * 5;
 
 let speedctlPath = '';
 let speedhookPath = '';
@@ -324,14 +329,35 @@ function getFlashPath() {
   return null;
 }
 
+function flushLogBuffer() {
+  if (logBuffer.length === 0) return;
+  
+  const content = logBuffer.join('');
+  logBuffer = [];
+  
+  fs.stat(LOG_FILE, (err, stats) => {
+    if (!err && stats.size > MAX_LOG_FILE_SIZE) {
+      fs.writeFile(LOG_FILE, content, (writeErr) => {
+        if (writeErr) console.error('Failed to write log:', writeErr);
+      });
+    } else {
+      fs.writeFile(LOG_FILE, content, { flag: 'a' }, (writeErr) => {
+        if (writeErr) console.error('Failed to write log:', writeErr);
+      });
+    }
+  });
+}
+
 function log(message, level = 'INFO') {
+  if (level !== 'ERROR' && level !== 'WARN') return;
+  
   const timestamp = new Date().toISOString();
   const logEntry = `[${timestamp}] [${level}] ${message}\n`;
-  console.log(logEntry.trim());
-  try {
-    fs.appendFileSync(LOG_FILE, logEntry);
-  } catch (e) {
-    console.error('Failed to write log:', e);
+  
+  logBuffer.push(logEntry);
+  
+  if (logBuffer.length >= MAX_LOG_BUFFER) {
+    flushLogBuffer();
   }
 }
 
@@ -571,21 +597,27 @@ function getAllChildProcessesRecursive(parentPid) {
   });
 }
 
+let lastInjectTime = 0;
+const INJECT_COOLDOWN = 5000;
+
 async function injectAllChildProcesses() {
+  const now = Date.now();
+  if (now - lastInjectTime < INJECT_COOLDOWN) {
+    return;
+  }
+  lastInjectTime = now;
+  
   try {
     const mainPid = process.pid;
-    log('扫描主进程 ' + mainPid + ' 的子进程');
-    
     const childPids = await getAllChildProcessesRecursive(mainPid);
-    log('找到 ' + childPids.length + ' 个相关子进程');
     
     for (const pid of childPids) {
-      log('准备注入子进程 PID=' + pid);
-      injectSpeedHook(pid);
+      if (!injectedPids.has(pid)) {
+        injectSpeedHook(pid);
+      }
     }
     
     if (isWindows11) {
-      log('Windows 11系统，延迟2秒后进行第二轮注入');
       setTimeout(secondPass, 2000);
     }
   } catch (e) {
@@ -623,34 +655,35 @@ if (FLASH_PATH) {
 app.commandLine.appendSwitch('allow-running-insecure-content');
 app.commandLine.appendSwitch('ignore-certificate-errors');
 app.commandLine.appendSwitch('ignore-gpu-blacklist');
-app.commandLine.appendSwitch('ignore-gpu-blocklist');
-app.commandLine.appendSwitch('enable-gpu-rasterization');
-app.commandLine.appendSwitch('enable-zero-copy');
-app.commandLine.appendSwitch('enable-accelerated-video');
-app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
-app.commandLine.appendSwitch('enable-gpu-compositing');
 app.commandLine.appendSwitch('no-sandbox');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding');
-app.commandLine.appendSwitch('disable-flash-3d-software-renderer');
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('disable-frame-rate-limit');
 app.commandLine.appendSwitch('disable-gpu-vsync');
-app.commandLine.appendSwitch('enable-fast-uncompress');
 app.commandLine.appendSwitch('enable-fast-startup');
-app.commandLine.appendSwitch('max-gum-fps', '60');
 app.commandLine.appendSwitch('high-dpi-support', '1');
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
-app.commandLine.appendSwitch('enable-features', 'CanvasOopRasterization,EnableSkiaRenderer');
+app.commandLine.appendSwitch('enable-features', 'CanvasOopRasterization');
 app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity');
 
 function createLauncherWindow() {
   const colors = getThemeColors();
   
+  const { screen } = require('electron');
+  const display = screen.getPrimaryDisplay();
+  const dpr = display.scaleFactor || 1;
+  
+  const baseWidth = 360;
+  const baseHeight = 500;
+  
+  const scaledWidth = Math.max(baseWidth, Math.floor(baseWidth * dpr * 0.8));
+  const scaledHeight = Math.max(baseHeight, Math.floor(baseHeight * dpr * 0.8));
+  
   launcherWindow = new BrowserWindow({
-    width: 360,
-    height: 420,
+    width: scaledWidth,
+    height: scaledHeight,
     title: '火影忍者Online启动器',
     resizable: false,
     maximizable: false,
@@ -906,12 +939,9 @@ function createLauncherWindow() {
   });
 
   launcherWindow.on('close', (event) => {
-    if (gameWindows.length > 0) {
+    if (!isQuitting) {
       event.preventDefault();
       launcherWindow.hide();
-    } else {
-      launcherWindow = null;
-      app.quit();
     }
   });
 
@@ -943,8 +973,12 @@ function createGameWindow(url, gameName, account) {
   
   const { width, height } = primaryDisplay.workAreaSize;
   const toolbarHeight = 36;
-  const gameWidth = Math.floor(width * 0.95);
-  const gameHeight = Math.floor(height * 0.95) - toolbarHeight;
+  
+  const maxGameWidth = 1440;
+  const maxGameHeight = 810;
+  
+  const gameWidth = Math.min(Math.floor(width * 0.95), maxGameWidth);
+  const gameHeight = Math.min(Math.floor(height * 0.95) - toolbarHeight, maxGameHeight);
 
   const colors = getThemeColors();
   
@@ -960,7 +994,9 @@ function createGameWindow(url, gameName, account) {
       webSecurity: false,
       enableRemoteModule: true,
       zoomFactor: 1.0,
-      defaultFontSize: 16
+      defaultFontSize: 16,
+      backgroundThrottling: false,
+      offscreen: false
     },
     show: true,
     fullscreenable: true,
@@ -968,6 +1004,7 @@ function createGameWindow(url, gameName, account) {
   });
   
   win.webContents.setZoomFactor(1.0);
+  win.webContents.setBackgroundThrottling(false);
 
   win.setMenu(null);
   
@@ -984,9 +1021,8 @@ function createGameWindow(url, gameName, account) {
       storage: sessionId
     });
     
-    session.cookies.on('changed', (event, cookie, cause, removed) => {
-      log('Tab' + tabIndex + ' Cookie变化: ' + cookie.name + '=' + cookie.value.substring(0, 20) + '... ' + (removed ? '删除' : cause));
-    });
+    // Cookie 监听器仅用于调试，游戏运行时不需要日志输出
+    session.cookies.on('changed', () => {});
 
     const { BrowserView } = require('electron');
     const view = new BrowserView({
@@ -999,14 +1035,30 @@ function createGameWindow(url, gameName, account) {
         allowRunningInsecureContent: true,
         session: session,
         enableRemoteModule: false,
-        sandbox: false
+        sandbox: false,
+        backgroundThrottling: false,
+        offscreen: false,
+        enablePreferredSizeMode: false,
+        partition: sessionId,
+        disableBlinkFeatures: 'AutomationControlled',
+        disableSiteIsolationTrials: true,
+        enableWebGL: true,
+        experimentalFeatures: false,
+        experimentalCanvasFeatures: false,
+        enableWebAudio: true,
+        spellcheck: false,
+        enableLabsExperiments: false,
+        enableCrashReporter: false
       }
     });
+    
+    view.webContents.setBackgroundThrottling(false);
+    view.webContents.setFrameRate(60);
 
     win.addBrowserView(view);
     
-    view.setBounds({ x: 0, y: toolbarHeight, width: win.getBounds().width, height: win.getBounds().height - toolbarHeight });
-    view.setAutoResize({ width: true, height: true });
+    const contentBounds = win.getContentBounds();
+    view.setBounds({ x: 0, y: toolbarHeight, width: contentBounds.width, height: contentBounds.height - toolbarHeight });
 
     const webContents = view.webContents;
     
@@ -1084,43 +1136,58 @@ function createGameWindow(url, gameName, account) {
     }
     
     updateToolbarTabList();
-    log('切换到Tab: ' + index);
   }
 
   function closeTab(index) {
     if (index < 1 || index > localTabs.length) return;
-    if (localTabs.length <= 1) {
-      win.close();
-      return;
-    }
     
     const targetIndex = index - 1;
     const tabToClose = localTabs[targetIndex];
     
-    if (tabToClose) {
-      win.removeBrowserView(tabToClose.view);
-      localTabs.splice(targetIndex, 1);
-      
-      if (localCurrentTabIndex >= localTabs.length) {
-        localCurrentTabIndex = localTabs.length - 1;
-      }
-      
-      const gameWinIndex = gameWindows.findIndex(w => w.win === win);
-      if (gameWinIndex !== -1) {
-        gameWindows[gameWinIndex].localTabs = localTabs;
-        gameWindows[gameWinIndex].localCurrentTabIndex = localCurrentTabIndex;
-      }
-      
-      switchTab(localCurrentTabIndex + 1);
-      updateToolbarTabList();
-      log('关闭Tab: ' + index);
+    if (!tabToClose) return;
+    
+    if (tabToClose.webContents) {
+      try {
+        tabToClose.webContents.setAudioMuted(true);
+        tabToClose.webContents.removeAllListeners();
+        if (typeof tabToClose.webContents.destroy === 'function') {
+          tabToClose.webContents.destroy();
+        }
+      } catch (e) {}
     }
+    if (tabToClose.view) {
+      try {
+        win.removeBrowserView(tabToClose.view);
+        tabToClose.view.destroy();
+      } catch (e) {}
+    }
+    
+    localTabs[targetIndex] = null;
+    localTabs.splice(targetIndex, 1);
+    
+    if (localTabs.length === 0) {
+      localTabs = null;
+      win.close();
+      return;
+    }
+    
+    if (localCurrentTabIndex >= localTabs.length) {
+      localCurrentTabIndex = localTabs.length - 1;
+    }
+    
+    const gameWinIndex = gameWindows.findIndex(w => w.win === win);
+    if (gameWinIndex !== -1) {
+      gameWindows[gameWinIndex].localTabs = localTabs;
+      gameWindows[gameWinIndex].localCurrentTabIndex = localCurrentTabIndex;
+    }
+    
+    switchTab(localCurrentTabIndex + 1);
+    updateToolbarTabList();
   }
 
   function updateToolbarTabList() {
     const tabList = localTabs.map((tab, idx) => ({ index: idx + 1, name: tab.name || ('窗口' + (idx + 1)) }));
     win.webContents.send('update-tab-list', { tabs: tabList, currentIndex: localCurrentTabIndex + 1 });
-    log('[updateToolbarTabList] 更新标签列表: ' + JSON.stringify(tabList));
   }
 
   const toolbarHtml = `<!DOCTYPE html>
@@ -1550,7 +1617,11 @@ function createGameWindow(url, gameName, account) {
     });
     
     document.getElementById('tabs-container').addEventListener('click', (e) => {
-      const tab = e.target.closest('.tab');
+      const target = e.target;
+      if (target.classList.contains('btn') || target.closest('.btn')) {
+        return;
+      }
+      const tab = target.closest('.tab');
       if (tab) {
         const tabIndex = parseInt(tab.dataset.tab);
         if (e.target.classList.contains('tab-close')) {
@@ -1663,6 +1734,9 @@ function createGameWindow(url, gameName, account) {
     
     function showAccountModal(options) {
       const { title, qq, password, windowName, onConfirm } = options;
+      
+      ipcRenderer.send('show-modal', true);
+      
       const modal = document.createElement('div');
       modal.className = 'add-account-modal';
       modal.innerHTML =
@@ -1685,7 +1759,14 @@ function createGameWindow(url, gameName, account) {
       if (qq) qqInput.value = qq;
       if (windowName) winNameInput.value = windowName;
       
-      const close = () => modal.remove();
+      qqInput.addEventListener('input', () => {
+        qqInput.style.borderColor = '';
+      });
+      
+      const close = () => {
+        modal.remove();
+        ipcRenderer.send('show-modal', false);
+      };
       
       modal.querySelector('#modalCancel').addEventListener('click', close);
       modal.querySelector('#modalSave').addEventListener('click', () => {
@@ -1705,7 +1786,7 @@ function createGameWindow(url, gameName, account) {
           const newPwd = pwdInput.value;
           const newWinName = winNameInput.value.trim();
           
-          if (!newQq || !/^(\d{5,12}|[^@\s]+@[^@\s]+\.[^@\s]+)$/.test(newQq)) {
+          if (!newQq) {
             qqInput.style.borderColor = '#ff4444';
             return;
           }
@@ -1739,7 +1820,9 @@ function createGameWindow(url, gameName, account) {
       });
     }
     
-    document.getElementById('btn-accounts').addEventListener('click', () => {
+    document.getElementById('btn-accounts').addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       console.log('[TOOLBAR] 点击账号按钮');
       
       const sidebar = document.getElementById('account-sidebar');
@@ -1795,18 +1878,7 @@ function createGameWindow(url, gameName, account) {
     });
     
     ipcRenderer.on('accounts-update', (event, accountList) => {
-      console.log('[TOOLBAR] 收到 accounts-update，账号数量: ' + (accountList ? accountList.length : 0));
-      ipcRenderer.send('debug-log', '[TOOLBAR] 收到 accounts-update，账号数量: ' + (accountList ? accountList.length : 0));
       accounts = accountList || [];
-      const sidebar = document.getElementById('account-sidebar');
-      if (sidebar) {
-        sidebar.classList.add('visible');
-        console.log('[TOOLBAR] 侧边栏已显示');
-        ipcRenderer.send('debug-log', '[TOOLBAR] 侧边栏已显示');
-      } else {
-        console.log('[TOOLBAR] 错误：找不到 account-sidebar 元素');
-        ipcRenderer.send('debug-log', '[TOOLBAR] 错误：找不到 account-sidebar 元素');
-      }
       renderAccountSidebar();
     });
     
@@ -1906,68 +1978,137 @@ function createGameWindow(url, gameName, account) {
     if (senderWin === win) {
       isSidebarVisible = visible;
       const sidebarWidth = 280;
-      const bounds = win.getBounds();
+      const bounds = win.getContentBounds();
       const toolbarHeight = 36;
       
-      localTabs.forEach(({ view }) => {
-        if (view) {
-          if (visible) {
-            view.setBounds({ x: 0, y: toolbarHeight, width: bounds.width - sidebarWidth, height: bounds.height - toolbarHeight });
-          } else {
-            view.setBounds({ x: 0, y: toolbarHeight, width: bounds.width, height: bounds.height - toolbarHeight });
+      localTabs.forEach((tab, idx) => {
+        if (tab.view) {
+          if (idx === localCurrentTabIndex) {
+            if (visible) {
+              tab.view.setBounds({ x: 0, y: toolbarHeight, width: bounds.width - sidebarWidth, height: bounds.height - toolbarHeight });
+            } else {
+              tab.view.setBounds({ x: 0, y: toolbarHeight, width: bounds.width, height: bounds.height - toolbarHeight });
+            }
           }
         }
       });
     }
   });
 
+  addListener('show-modal', (event, show) => {
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    if (senderWin === win) {
+      const toolbarHeight = 36;
+      const bounds = win.getContentBounds();
+      
+      localTabs.forEach((tab, idx) => {
+        if (tab.view) {
+          if (idx === localCurrentTabIndex) {
+            if (show) {
+              tab.view.setBounds({ x: 0, y: bounds.height, width: bounds.width, height: 0 });
+            } else {
+              const sidebarWidth = isSidebarVisible ? 280 : 0;
+              tab.view.setBounds({ x: 0, y: toolbarHeight, width: bounds.width - sidebarWidth, height: bounds.height - toolbarHeight });
+            }
+          }
+        }
+      });
+    }
+  });
+
+  let resizeTimeout = null;
+  const updateBrowserViewAutoResize = () => {
+    if (resizeTimeout) clearTimeout(resizeTimeout);
+    
+    resizeTimeout = setTimeout(() => {
+      const sidebarWidth = isSidebarVisible ? 280 : 0;
+      
+      const activeTab = localTabs[localCurrentTabIndex];
+      if (activeTab && activeTab.view) {
+        activeTab.view.setAutoResize({
+          width: true,
+          height: true,
+          horizontal: sidebarWidth === 0,
+          vertical: true
+        });
+        
+        const contentBounds = win.getContentBounds();
+        const targetWidth = contentBounds.width - sidebarWidth;
+        const targetHeight = contentBounds.height - toolbarHeight;
+        activeTab.view.setBounds({ x: 0, y: toolbarHeight, width: targetWidth, height: targetHeight });
+      }
+    }, 30);
+  };
+
   win.on('resize', () => {
-    const bounds = win.getBounds();
-    const sidebarWidth = isSidebarVisible ? 280 : 0;
-    localTabs.forEach(({ view }) => {
-      view.setBounds({ x: 0, y: toolbarHeight, width: bounds.width - sidebarWidth, height: bounds.height - toolbarHeight });
-    });
+    updateBrowserViewAutoResize();
+  });
+
+  win.on('maximize', () => {
+    updateBrowserViewAutoResize();
+  });
+
+  win.on('unmaximize', () => {
+    setTimeout(() => {
+      updateBrowserViewAutoResize();
+    }, 50);
   });
 
   win.on('blur', () => {
-    log('游戏窗口 失去焦点');
-    localTabs.forEach(({ webContents }) => {
-      if (webContents && !webContents.isDestroyed()) {
-        webContents.setBackgroundThrottling(false);
+    const activeTab = localTabs[localCurrentTabIndex];
+    if (activeTab && activeTab.webContents) {
+      if (typeof activeTab.webContents.isDestroyed === 'function' && !activeTab.webContents.isDestroyed()) {
+        activeTab.webContents.setBackgroundThrottling(false);
+        activeTab.webContents.setAudioMuted(true);
+      } else {
+        activeTab.webContents.setBackgroundThrottling(false);
+        activeTab.webContents.setAudioMuted(true);
       }
-    });
+    }
   });
 
   win.on('focus', () => {
-    log('游戏窗口 获取焦点');
-    localTabs.forEach(({ webContents }) => {
-      if (webContents && !webContents.isDestroyed()) {
-        webContents.setBackgroundThrottling(false);
+    const activeTab = localTabs[localCurrentTabIndex];
+    if (activeTab && activeTab.webContents) {
+      if (typeof activeTab.webContents.isDestroyed === 'function' && !activeTab.webContents.isDestroyed()) {
+        activeTab.webContents.setBackgroundThrottling(false);
+        activeTab.webContents.setAudioMuted(isAudioMuted);
+      } else {
+        activeTab.webContents.setBackgroundThrottling(false);
+        activeTab.webContents.setAudioMuted(isAudioMuted);
       }
-    });
+    }
   });
 
   win.on('show', () => {
-    log('游戏窗口 显示');
-    localTabs.forEach(({ webContents }) => {
-      if (webContents && !webContents.isDestroyed()) {
-        webContents.setBackgroundThrottling(false);
-        webContents.setAudioMuted(isAudioMuted);
+    const activeTab = localTabs[localCurrentTabIndex];
+    if (activeTab && activeTab.webContents) {
+      if (typeof activeTab.webContents.isDestroyed === 'function' && !activeTab.webContents.isDestroyed()) {
+        activeTab.webContents.setBackgroundThrottling(false);
+        activeTab.webContents.setAudioMuted(isAudioMuted);
+      } else {
+        activeTab.webContents.setBackgroundThrottling(false);
+        activeTab.webContents.setAudioMuted(isAudioMuted);
       }
-    });
+    }
   });
 
   win.on('restore', () => {
-    log('游戏窗口 从最小化恢复');
-    localTabs.forEach(({ webContents }) => {
-      if (webContents && !webContents.isDestroyed()) {
-        webContents.setBackgroundThrottling(false);
-        webContents.setAudioMuted(isAudioMuted);
+    const activeTab = localTabs[localCurrentTabIndex];
+    if (activeTab && activeTab.webContents) {
+      if (typeof activeTab.webContents.isDestroyed === 'function' && !activeTab.webContents.isDestroyed()) {
+        activeTab.webContents.setBackgroundThrottling(false);
+        activeTab.webContents.setAudioMuted(isAudioMuted);
+      } else {
+        activeTab.webContents.setBackgroundThrottling(false);
+        activeTab.webContents.setAudioMuted(isAudioMuted);
       }
-    });
+    }
     win.setSize(win.getSize()[0], win.getSize()[1] + 1);
     setTimeout(() => {
-      if (!win.isDestroyed()) {
+      if (typeof win.isDestroyed === 'function' && !win.isDestroyed()) {
+        win.setSize(win.getSize()[0], win.getSize()[1] - 1);
+      } else if (!win.isDestroyed) {
         win.setSize(win.getSize()[0], win.getSize()[1] - 1);
       }
     }, 50);
@@ -1978,10 +2119,32 @@ function createGameWindow(url, gameName, account) {
       ipcMain.removeListener(channel, handler);
     });
     
+    // 窗口关闭前停止所有标签的音频并销毁BrowserView
+    localTabs.forEach((tab, idx) => {
+      if (tab.webContents) {
+        try {
+          tab.webContents.setAudioMuted(true);
+          tab.webContents.removeAllListeners();
+          if (typeof tab.webContents.destroy === 'function') {
+            tab.webContents.destroy();
+          }
+        } catch (e) {}
+      }
+      if (tab.view) {
+        try {
+          win.removeBrowserView(tab.view);
+          tab.view.destroy();
+        } catch (e) {}
+      }
+      delete localTabs[idx];
+    });
+    localTabs = null;
+    
     log('游戏窗口 已关闭');
     
     const index = gameWindows.findIndex(w => w.win === win);
     if (index !== -1) {
+      gameWindows[index] = null;
       gameWindows.splice(index, 1);
     }
     
@@ -2052,17 +2215,42 @@ function createTray() {
       label: '退出',
       click: () => {
         log('用户点击托盘退出');
+        isQuitting = true;
         try {
+          // 退出前停止所有游戏窗口的音频并销毁BrowserView
           for (let i = 0; i < gameWindows.length; i++) {
-            const gameWin = gameWindows[i].win;
-            if (gameWin && !gameWin.isDestroyed()) {
-              gameWin.destroy();
+            const gw = gameWindows[i];
+            if (gw.localTabs) {
+              gw.localTabs.forEach((tab) => {
+                if (tab.webContents && typeof tab.webContents.isDestroyed === 'function' && !tab.webContents.isDestroyed()) {
+                  tab.webContents.setAudioMuted(true);
+                  tab.webContents.removeAllListeners();
+                } else if (tab.webContents) {
+                  tab.webContents.setAudioMuted(true);
+                  tab.webContents.removeAllListeners();
+                }
+                if (tab.view && typeof tab.view.destroy === 'function') {
+                  try {
+                    tab.view.destroy();
+                  } catch (e) {}
+                }
+              });
+              gw.localTabs = [];
+            }
+            if (gw.win && typeof gw.win.isDestroyed === 'function' && !gw.win.isDestroyed()) {
+              gw.win.destroy();
+            } else if (gw.win) {
+              gw.win.destroy();
             }
           }
           gameWindows = [];
+          if (launcherWindow && !launcherWindow.isDestroyed()) {
+            launcherWindow.close();
+          }
         } catch (e) {
-          log('关闭游戏窗口失败: ' + e.message, 'ERROR');
+          log('关闭窗口失败: ' + e.message, 'ERROR');
         }
+        flushLogBuffer();
         app.quit();
       }
     }
@@ -2247,13 +2435,14 @@ function initAutoUpdater() {
   
   function createProgressWindow() {
     progressWindow = new BrowserWindow({
-      width: 360,
-      height: 120,
+      width: 400,
+      height: 160,
       title: '下载更新',
       resizable: false,
       maximizable: false,
       minimizable: false,
-      backgroundColor: '#1a1a2e',
+      backgroundColor: '#ffffff',
+      show: false,
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false
@@ -2268,30 +2457,37 @@ function initAutoUpdater() {
   <meta charset="UTF-8">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
-      padding: 20px;
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #ffffff;
+      padding: 24px;
       font-family: 'Microsoft YaHei', sans-serif;
-      color: #fff;
+      color: #333333;
     }
     .progress-container {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 16px;
+      width: 100%;
+      height: 100%;
+      justify-content: center;
     }
     .title {
       font-size: 14px;
       text-align: center;
+      color: #333333;
     }
     .progress-bar {
       height: 8px;
-      background: #2d2d44;
+      background: #f0f0f0;
       border-radius: 4px;
       overflow: hidden;
     }
     .progress-fill {
       height: 100%;
-      background: linear-gradient(90deg, #00d4ff, #0099cc);
+      background: linear-gradient(90deg, #4a90d9, #357abd);
       border-radius: 4px;
       transition: width 0.3s ease;
       min-width: 0%;
@@ -2300,18 +2496,18 @@ function initAutoUpdater() {
       display: flex;
       justify-content: space-between;
       font-size: 12px;
-      color: #aaa;
+      color: #666666;
     }
   </style>
 </head>
 <body>
   <div class="progress-container">
-    <div class="title">📦 正在下载更新...</div>
+    <div class="title">正在下载更新...</div>
     <div class="progress-bar">
       <div class="progress-fill" id="progressFill"></div>
     </div>
     <div class="progress-info">
-      <span id="progressText">0%</span>
+      <span id="progressText">0% (0MB/0MB)</span>
       <span id="speedText">0MB/s</span>
     </div>
   </div>
@@ -2327,6 +2523,10 @@ function initAutoUpdater() {
 </html>`;
     
     progressWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(progressHtml));
+    
+    progressWindow.once('ready-to-show', () => {
+      progressWindow.show();
+    });
     
     progressWindow.on('closed', () => {
       progressWindow = null;
@@ -2700,13 +2900,19 @@ function addTabToGameWindow(gameWindow, name, account) {
       allowRunningInsecureContent: true,
       session: session,
       enableRemoteModule: false,
-      sandbox: false
+      sandbox: false,
+      backgroundThrottling: false,
+      offscreen: false,
+      enablePreferredSizeMode: false
     }
   });
+  
+  // 禁用后台节流，确保游戏流畅运行
+  view.webContents.setBackgroundThrottling(false);
 
   win.addBrowserView(view);
-  view.setBounds({ x: 0, y: toolbarHeight, width: win.getBounds().width, height: win.getBounds().height - toolbarHeight });
-  view.setAutoResize({ width: true, height: true });
+  const contentBounds = win.getContentBounds();
+  view.setBounds({ x: 0, y: toolbarHeight, width: contentBounds.width, height: contentBounds.height - toolbarHeight });
 
   const webContents = view.webContents;
   webContents.loadURL(DEFAULT_URL);
@@ -2723,18 +2929,17 @@ function addTabToGameWindow(gameWindow, name, account) {
   localTabs.push(tabInfo);
   gameWindow.localTabs = localTabs;
   
-  // 显示新标签，隐藏其他标签
+  // 隐藏新标签，保持当前标签显示
   const bounds = win.getBounds();
+  
   localTabs.forEach((tab, idx) => {
-    if (idx === localTabs.length - 1) {
+    if (idx === gameWindow.localCurrentTabIndex) {
       tab.view.setBounds({ x: 0, y: toolbarHeight, width: bounds.width, height: bounds.height - toolbarHeight });
       win.addBrowserView(tab.view);
     } else {
       tab.view.setBounds({ x: 0, y: bounds.height, width: bounds.width, height: 0 });
     }
   });
-  
-  gameWindow.localCurrentTabIndex = localTabs.length - 1;
   
   webContents.on('did-finish-load', () => {
     log('Tab' + tabIndex + ' 加载完成');
