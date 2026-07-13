@@ -1,0 +1,1208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>火影忍者Online</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg1: #ffffff;
+      --bg2: #f5f5f5;
+      --border: #e0e0e0;
+      --text: #333333;
+      --btnBg: #ffffff;
+      --btnHover: #f8f8f8;
+      --btnBorder: #dddddd;
+      --separator: #dddddd;
+      --accent: #3498db;
+      --toolbarHeight: 36px;
+    }
+    body {
+      background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      font-family: 'Microsoft YaHei', sans-serif;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 8px;
+      height: var(--toolbarHeight);
+      background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+      border-bottom: 1px solid var(--border);
+      -webkit-app-region: drag;
+      flex-shrink: 0;
+    }
+    .toolbar-left { display: flex; align-items: center; gap: 4px; flex: 1; }
+    .toolbar-center { display: flex; align-items: center; gap: 8px; -webkit-app-region: no-drag; }
+    .toolbar-right { display: flex; align-items: center; gap: 8px; -webkit-app-region: no-drag; }
+    .title {
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      margin-right: 8px;
+    }
+    .tabs-container {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+    .tab {
+      height: 28px;
+      padding: 0 12px;
+      border: 1px solid var(--btnBorder);
+      border-radius: 4px 4px 0 0;
+      background: linear-gradient(var(--btnBg), var(--btnHover));
+      color: var(--text);
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      -webkit-app-region: no-drag;
+    }
+    .tab:hover {
+      background: linear-gradient(var(--btnHover), #e8e8e8);
+    }
+    .tab.active {
+      background: #fff;
+      border-bottom-color: #fff;
+      color: #333;
+    }
+    .tab-close {
+      font-size: 10px;
+      opacity: 0.6;
+    }
+    .tab-close:hover {
+      opacity: 1;
+      color: #e74c3c;
+    }
+    .tab-add {
+      height: 28px;
+      width: 28px;
+      border: 1px solid var(--btnBorder);
+      border-radius: 4px;
+      background: linear-gradient(var(--btnBg), var(--btnHover));
+      color: var(--text);
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-app-region: no-drag;
+    }
+    .tab-add:hover {
+      background: linear-gradient(var(--btnHover), #e8e8e8);
+    }
+    .btn {
+      height: 24px;
+      padding: 0 12px;
+      border: 1px solid var(--btnBorder);
+      border-radius: 4px;
+      background: linear-gradient(var(--btnBg), var(--btnHover));
+      color: var(--text);
+      font-size: 12px;
+      cursor: pointer;
+      outline: none;
+      font-family: 'Microsoft YaHei', sans-serif;
+      min-width: 40px;
+      transition: all .15s;
+      -webkit-app-region: no-drag;
+    }
+    .btn:hover {
+      background: linear-gradient(var(--btnHover), #e8e8e8);
+      border-color: #ccc;
+    }
+    .btn:active {
+      background: linear-gradient(#e8e8e8, #d8d8d8);
+    }
+    .btn.active {
+      background: linear-gradient(#e74c3c, #c0392b);
+      border-color: #a0291b;
+      color: #fff;
+    }
+    .separator {
+      width: 1px;
+      height: 18px;
+      background: var(--separator);
+    }
+    .select-container {
+      position: relative;
+    }
+    .select-container select {
+      height: 24px;
+      padding: 0 24px 0 8px;
+      border: 1px solid var(--btnBorder);
+      border-radius: 4px;
+      background: var(--btnBg);
+      color: var(--text);
+      font-size: 12px;
+      cursor: pointer;
+      outline: none;
+      font-family: 'Microsoft YaHei', sans-serif;
+      min-width: 70px;
+      appearance: none;
+      -webkit-appearance: none;
+    }
+    .select-container::after {
+      content: '▼';
+      position: absolute;
+      right: 6px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 8px;
+      color: var(--text);
+      pointer-events: none;
+    }
+    .window-controls {
+      display: flex;
+      gap: 4px;
+    }
+    .control-btn {
+      width: 28px;
+      height: 24px;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-appearance: none;
+    }
+    .control-btn:hover {
+      background: rgba(0,0,0,.05);
+    }
+    .control-btn.close:hover {
+      background: #e74c3c;
+      color: #fff;
+    }
+    .webview-wrap {
+      flex: 1;
+      min-height: 0;
+      position: relative;
+    }
+    .webview-wrap webview {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .webview-wrap webview.hidden {
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .account-sidebar {
+      position: fixed;
+      right: -280px;
+      top: var(--toolbarHeight);
+      width: 280px;
+      height: calc(100vh - var(--toolbarHeight));
+      background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+      border-left: 1px solid #4a4a6a;
+      transition: right 0.3s ease;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+    }
+    .account-sidebar.visible {
+      right: 0;
+    }
+    .account-sidebar-header {
+      display: flex;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid #4a4a6a;
+      gap: 8px;
+    }
+    .account-sidebar-header h3 {
+      color: #fff;
+      font-size: 14px;
+      flex: 1;
+      margin: 0;
+    }
+    .account-sidebar-btn {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+    .account-sidebar-add {
+      background: #00d4ff;
+      color: #1a1a2e;
+      font-weight: bold;
+    }
+    .account-sidebar-add:hover {
+      background: #00b8e6;
+    }
+    .account-sidebar-launch-all {
+      background: #10b981;
+      color: #fff;
+    }
+    .account-sidebar-launch-all:hover {
+      background: #059669;
+    }
+    .account-sidebar-close {
+      background: transparent;
+      color: #aaa;
+      padding: 4px 8px;
+    }
+    .account-sidebar-close:hover {
+      color: #fff;
+    }
+    .account-sidebar-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    .account-sidebar-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: #2d2d44;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .account-sidebar-item:hover {
+      background: #3d3d5c;
+    }
+    .account-sidebar-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .account-sidebar-win-name {
+      color: #00d4ff;
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .account-sidebar-qq {
+      color: #aaa;
+      font-size: 11px;
+    }
+    .account-sidebar-actions {
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .account-sidebar-item:hover .account-sidebar-actions {
+      opacity: 1;
+    }
+    .account-sidebar-action-btn {
+      width: 24px;
+      height: 24px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+    }
+    .account-sidebar-action-btn:hover {
+      background: rgba(255,255,255,0.2);
+    }
+    .account-sidebar-action-btn.open {
+      color: #10b981;
+    }
+    .account-sidebar-action-btn.edit {
+      color: #ffd700;
+    }
+    .account-sidebar-action-btn.delete {
+      color: #e74c3c;
+    }
+    .account-sidebar-hint {
+      text-align: center;
+      color: #666;
+      font-size: 12px;
+      padding: 20px;
+    }
+    .add-account-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    }
+    .add-account-box {
+      background: #2d2d44;
+      border-radius: 12px;
+      padding: 24px;
+      width: 320px;
+    }
+    .add-account-box h3 {
+      color: #fff;
+      font-size: 16px;
+      margin-bottom: 16px;
+      text-align: center;
+    }
+    .add-account-box input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #4a4a6a;
+      border-radius: 6px;
+      background: #1a1a2e;
+      color: #fff;
+      font-size: 13px;
+      margin-bottom: 10px;
+      outline: none;
+    }
+    .add-account-box input:focus {
+      border-color: #00d4ff;
+    }
+    .add-account-box input::placeholder {
+      color: #666;
+    }
+    .add-account-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .add-account-actions button {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .btn-cancel {
+      background: #4a4a6a;
+      color: #fff;
+    }
+    .btn-cancel:hover {
+      background: #5a5a7a;
+    }
+    .btn-confirm {
+      background: #00d4ff;
+      color: #1a1a2e;
+      font-weight: bold;
+    }
+    .btn-confirm:hover {
+      background: #00b8e6;
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <span class="title" id="windowTitle">火影忍者Online</span>
+      <div class="tabs-container" id="tabs-container">
+        <div class="tab active" data-tab="1">
+          <span>窗口1</span>
+          <span class="tab-close" data-tab="1">×</span>
+        </div>
+        <div class="tab-add" id="tab-add">+</div>
+      </div>
+    </div>
+    <div class="toolbar-center">
+      <button class="btn" id="btn-refresh" title="刷新页面（保留登录状态）">刷新</button>
+      <button class="btn" id="btn-clear-cache" title="清空缓存并重新加载">清空缓存</button>
+      <div class="separator"></div>
+      <button class="btn" id="btn-accounts" title="账号管理">👤 账号</button>
+      <div class="separator"></div>
+      <div class="select-container">
+        <select id="speed-select">
+          <option value="1" selected>1x (还原)</option>
+          <option value="2">2x</option>
+          <option value="4">4x</option>
+          <option value="6">6x</option>
+          <option value="10">10x</option>
+          <option value="20">20x</option>
+          <option value="0.5">0.5x (减速)</option>
+        </select>
+      </div>
+      <div class="separator"></div>
+      <button class="btn" id="btn-mute" title="切换静音">🔊</button>
+    </div>
+    <div class="toolbar-right">
+      <div class="window-controls">
+        <button class="control-btn" id="btn-min">-</button>
+        <button class="control-btn" id="btn-max">□</button>
+        <button class="control-btn close" id="btn-close">×</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="webview-wrap" id="container"></div>
+
+  <div class="account-sidebar" id="account-sidebar">
+    <div class="account-sidebar-header">
+      <h3>账号列表</h3>
+      <button class="account-sidebar-btn account-sidebar-launch-all" id="accountLaunchAll" title="一键启动全部">一键启动</button>
+      <button class="account-sidebar-btn account-sidebar-add" id="accountSidebarAdd" title="添加账号">+</button>
+      <button class="account-sidebar-btn account-sidebar-close" id="accountSidebarClose" title="关闭">×</button>
+    </div>
+    <div class="account-sidebar-list" id="account-sidebar-list"></div>
+  </div>
+
+  <script>
+    const container = document.getElementById('container');
+    const tabBar = document.getElementById('tabs-container');
+    const speedSelect = document.getElementById('speed-select');
+    const btnMute = document.getElementById('btn-mute');
+
+    let tabs = [];
+    let activeTabId = null;
+    let accounts = [];
+    let currentGame = null;
+    let isMuted = false;
+    let tabCounter = 0;
+    let currentSpeed = 1;
+
+    // IPC 通信
+    const ipcRenderer = require('electron').ipcRenderer;
+
+    // 游戏信息接口（与主进程通信）
+    window.gameAPI = {
+      // 请求账号列表
+      getAccounts: function() {
+        ipcRenderer.send('get-accounts-window');
+      },
+      // 保存账号
+      saveAccounts: function(accountList) {
+        ipcRenderer.send('save-accounts-window', accountList);
+      },
+      // 添加账号
+      addAccount: function(data) {
+        ipcRenderer.send('add-account', data);
+      },
+      // 更新账号
+      updateAccount: function(data) {
+        ipcRenderer.send('update-account', data);
+      },
+      // 删除账号
+      removeAccount: function(accountId) {
+        ipcRenderer.send('remove-account', accountId);
+      },
+      // 启动账号
+      launchAccount: function(accountId) {
+        ipcRenderer.send('launch-account-window', accountId);
+      },
+      // 填充账号到当前标签
+      fillAccount: function(accountId) {
+        const account = accounts.find(a => a.id === accountId);
+        if (account) {
+          const tab = tabs.find(t => t.id === activeTabId);
+          if (tab && tab._webview) {
+            injectQuickLogin(tab._webview, account.qq, account.qqPwd || '');
+          }
+        }
+      },
+      // 启动所有账号
+      launchAllAccounts: function() {
+        ipcRenderer.send('launch-all-accounts-window');
+      },
+      // 切换侧边栏
+      toggleSidebar: function(visible) {
+        ipcRenderer.send('toggle-sidebar', visible);
+      },
+      // 显示/隐藏模态框
+      showModal: function(show) {
+        ipcRenderer.send('show-modal', show);
+      },
+      // 获取配置
+      getConfig: function(key) {
+        return new Promise((resolve) => {
+          ipcRenderer.send('get-config', key);
+          ipcRenderer.once('config-result', (event, value) => resolve(value));
+        });
+      },
+      // 设置配置
+      setConfig: function(key, value) {
+        ipcRenderer.send('set-config', key, value);
+      },
+      // 变速
+      setSpeed: function(speed) {
+        ipcRenderer.send('set-game-speed', speed);
+      },
+      // 刷新页面
+      refreshPage: function() {
+        const tab = tabs.find(t => t.id === activeTabId);
+        if (tab && tab._webview) {
+          tab._webview.reload();
+        }
+      },
+      // 清空缓存
+      clearCache: function() {
+        const tab = tabs.find(t => t.id === activeTabId);
+        if (tab && tab._webview) {
+          tab._webview.clearCache();
+          tab._webview.reload();
+        }
+      },
+      // 关闭窗口
+      closeWindow: function() {
+        ipcRenderer.send('close-window');
+      },
+      // 最小化
+      minWindow: function() {
+        ipcRenderer.send('min-window');
+      },
+      // 最大化
+      maxWindow: function() {
+        ipcRenderer.send('max-window');
+      },
+      // 新建标签
+      newTab: function() {
+        addTab();
+      },
+      // 关闭标签
+      closeTab: function(index) {
+        const tab = tabs.find(t => t.index === index);
+        if (tab) {
+          removeTab(tab.id);
+        }
+      },
+      // 切换标签
+      switchTab: function(index) {
+        const tab = tabs.find(t => t.index === index);
+        if (tab) {
+          switchTab(tab.id);
+        }
+      },
+      // 调试日志
+      debugLog: function(level, category, message) {
+        // 静默处理，不输出日志
+      }
+    };
+
+    // 工具函数
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function isLoginPage(url) {
+      if (!url) return false;
+      return /ptlogin2\.qq\.com/i.test(url) ||
+             /xui\.ptlogin2\.qq\.com/i.test(url) ||
+             /ssl\.ptlogin2\.qq\.com/i.test(url) ||
+             /login\.qq\.com/i.test(url) ||
+             /qlogin\.qq\.com/i.test(url);
+    }
+
+    function getPartition(tabId) {
+      return 'share:game';
+    }
+
+    // 快速登录注入
+    function injectQuickLogin(webview, qqNumber, password) {
+      const js = [
+        '(function() {',
+        '  var qqNum = ' + JSON.stringify(qqNumber) + ';',
+        '  var pwd = ' + JSON.stringify(password || '') + ';',
+        '  function fillInput(doc, selector, value) {',
+        '    try {',
+        '      var input = doc.querySelector(selector);',
+        '      if (input && input.offsetParent !== null) {',
+        '        var nativeSetter = Object.getOwnPropertyDescriptor(',
+        '          window.HTMLInputElement.prototype, "value").set;',
+        '        nativeSetter.call(input, value);',
+        '        input.dispatchEvent(new Event("input", { bubbles: true }));',
+        '        input.dispatchEvent(new Event("change", { bubbles: true }));',
+        '        input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));',
+        '        return true;',
+        '      }',
+        '    } catch(e) {}',
+        '    return false;',
+        '  }',
+        '  function tryFillInputs(doc) {',
+        '    var qqSelectors = ["#u", "input[name=\\"u\\"]", "#qq_num",',
+        '      "input[placeholder*=\\"QQ\\"]", "input[placeholder*=\\"账号\\"]",',
+        '      "input[placeholder*=\\"号码\\"]", "input[placeholder*=\\"邮箱\\"]",',
+        '      "input[placeholder*=\\"email\\"]", "input[type=\\"email\\"]",',
+        '      "input[type=\\"text\\"]"];',
+        '    for (var i = 0; i < qqSelectors.length; i++) {',
+        '      if (fillInput(doc, qqSelectors[i], qqNum)) break;',
+        '    }',
+        '    if (pwd) {',
+        '      var pwdSelectors = ["#p", "input[name=\\"p\\"]",',
+        '        "input[type=\\"password\\"]", "input[placeholder*=\\"密码\\"]"];',
+        '      for (var i = 0; i < pwdSelectors.length; i++) {',
+        '        if (fillInput(doc, pwdSelectors[i], pwd)) break;',
+        '      }',
+        '    }',
+        '  }',
+        '  function searchAllFrames(win) {',
+        '    try { tryFillInputs(win.document); } catch(e) {}',
+        '    try {',
+        '      for (var i = 0; i < win.frames.length; i++) {',
+        '        try { searchAllFrames(win.frames[i]); } catch(e) {}',
+        '      }',
+        '    } catch(e) {}',
+        '  }',
+        '  searchAllFrames(window);',
+        '})()'
+      ].join('\n');
+      webview.executeJavaScript(js).catch(function() {});
+    }
+
+    // 尝试自动登录
+    function tryPendingInject(tab) {
+      if (!tab._pendingAccount) return;
+      if (!tab._webview) return;
+
+      const acc = tab._pendingAccount;
+      injectQuickLogin(tab._webview, acc.qq, acc.qqPwd);
+
+      // 持续尝试直到成功或超时
+      if (!tab._injectTimer) {
+        let attempts = 0;
+        tab._injectTimer = setInterval(function() {
+          attempts++;
+          if (!tab._pendingAccount || !tab._webview) {
+            clearInterval(tab._injectTimer);
+            tab._injectTimer = null;
+            return;
+          }
+          injectQuickLogin(tab._webview, acc.qq, acc.qqPwd);
+          if (attempts >= 30) {
+            clearInterval(tab._injectTimer);
+            tab._injectTimer = null;
+            tab._pendingAccount = null;
+          }
+        }, 2000);
+      }
+    }
+
+    // 创建 webview
+    function createWebview(tab) {
+      const webview = document.createElement('webview');
+      webview.src = currentGame ? currentGame.url : 'https://huoying.qq.com/';
+      webview.setAttribute('plugins', '');
+      webview.setAttribute('partition', getPartition(tab.id));
+      webview.setAttribute('webpreferences', 'allowRunningInsecureContent=yes,webSecurity=no,nativeWindowOpen=no,contextIsolation=no,enableRemoteModule=yes,offscreen=false,backgroundThrottling=false');
+      webview.dataset.tabId = tab.id;
+
+      if (tab.id !== activeTabId) {
+        webview.classList.add('hidden');
+      }
+
+      // 阻止新窗口/弹窗，在当前 webview 中打开
+      webview.addEventListener('new-window', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.url) {
+          webview.loadURL(e.url);
+        }
+        return false;
+      });
+
+      // 阻止页面内导航打开新窗口
+      webview.addEventListener('will-navigate', (e) => {
+        // 正常导航，不处理
+      });
+
+      webview.addEventListener('did-navigate', (e) => {
+        tryPendingInject(tab);
+      });
+
+      webview.addEventListener('did-navigate-in-page', () => {
+        tryPendingInject(tab);
+      });
+
+      webview.addEventListener('did-stop-loading', () => {
+        tryPendingInject(tab);
+      });
+
+      webview.addEventListener('did-start-loading', () => {
+        if (isMuted) {
+          try { webview.setAudioMuted(true); } catch (e) {}
+        }
+      });
+
+      // 处理插件崩溃（包括 Flash）
+      webview.addEventListener('plugin-crashed', (e) => {
+        window.gameAPI.debugLog('error', 'webview', '插件崩溃: ' + (e.name || 'unknown'));
+        // 尝试刷新页面恢复 Flash
+        setTimeout(() => {
+          if (tab._webview && !tab._webview.isCrashed()) {
+            tab._webview.reload();
+          }
+        }, 1000);
+      });
+
+      // 处理页面加载失败
+      webview.addEventListener('did-fail-load', (e) => {
+        if (e.errorCode !== -3) { // -3 是 ERR_ABORTED，通常忽略
+          window.gameAPI.debugLog('error', 'webview', '加载失败: ' + e.errorDescription + ' (' + e.errorCode + ')');
+        }
+      });
+
+      // 处理渲染进程崩溃
+      webview.addEventListener('crashed', (e) => {
+        window.gameAPI.debugLog('error', 'webview', '渲染进程崩溃');
+      });
+
+      tab._webview = webview;
+      container.appendChild(webview);
+    }
+
+    // 添加标签
+    function addTab(name, account) {
+      tabCounter++;
+      const tab = {
+        id: 'tab-' + Date.now() + '-' + tabCounter,
+        index: tabs.length + 1,
+        name: name || '窗口' + (tabs.length + 1),
+        _webview: null,
+        _pendingAccount: account || null,
+        _injectTimer: null
+      };
+
+      tabs.push(tab);
+      createWebview(tab);
+      switchTab(tab.id);
+      renderTabs();
+
+      window.gameAPI.debugLog('info', 'launcher', '启动: ' + tab.name);
+      return tab;
+    }
+
+    // 移除标签
+    function removeTab(tabId) {
+      const idx = tabs.findIndex(t => t.id === tabId);
+      if (idx === -1) return;
+
+      const tab = tabs[idx];
+
+      // 清理定时器
+      if (tab._injectTimer) {
+        clearInterval(tab._injectTimer);
+        tab._injectTimer = null;
+      }
+
+      // 移除 webview
+      if (tab._webview && tab._webview.parentNode) {
+        tab._webview.parentNode.removeChild(tab._webview);
+      }
+
+      tabs.splice(idx, 1);
+
+      // 如果没有标签了，关闭窗口
+      if (tabs.length === 0) {
+        window.gameAPI.closeWindow();
+        return;
+      }
+
+      // 如果关闭的是当前标签，切换到前一个
+      if (activeTabId === tabId) {
+        const newIdx = Math.max(0, idx - 1);
+        switchTab(tabs[newIdx].id);
+      }
+
+      // 重新编号
+      tabs.forEach((t, i) => {
+        t.index = i + 1;
+      });
+
+      renderTabs();
+      window.gameAPI.debugLog('info', 'launcher', '关闭: ' + tab.name);
+    }
+
+    // 切换标签
+    function switchTab(tabId) {
+      if (activeTabId === tabId) return;
+
+      const prevTab = tabs.find(t => t.id === activeTabId);
+      const nextTab = tabs.find(t => t.id === tabId);
+
+      activeTabId = tabId;
+
+      if (prevTab && prevTab._webview) {
+        prevTab._webview.classList.add('hidden');
+      }
+      if (nextTab && nextTab._webview) {
+        nextTab._webview.classList.remove('hidden');
+        if (isMuted) {
+          try { nextTab._webview.setAudioMuted(true); } catch (e) {}
+        }
+      }
+
+      renderTabs();
+    }
+
+    // 渲染标签栏
+    function renderTabs() {
+      const addBtn = document.getElementById('tab-add');
+      tabBar.innerHTML = '';
+
+      tabs.forEach(tab => {
+        const tabEl = document.createElement('div');
+        tabEl.className = 'tab' + (tab.id === activeTabId ? ' active' : '');
+        tabEl.dataset.tab = tab.index;
+        tabEl.innerHTML = '<span>' + escapeHtml(tab.name) + '</span><span class="tab-close" data-tab="' + tab.index + '">×</span>';
+        tabBar.appendChild(tabEl);
+      });
+
+      // 重新添加添加按钮
+      addBtn.id = 'tab-add';
+      addBtn.textContent = '+';
+      tabBar.appendChild(addBtn);
+    }
+
+    // 账号侧边栏
+    function renderAccountSidebar() {
+      const list = document.getElementById('account-sidebar-list');
+      const items = accounts.filter(a => a.qq);
+
+      if (items.length === 0) {
+        list.innerHTML = '<div class="account-sidebar-hint">暂无账号<br>点击 + 添加</div>';
+        return;
+      }
+
+      let html = '';
+      items.forEach(function(a) {
+        const winName = a.windowName || a.qq;
+        html += '<div class="account-sidebar-item" data-account-id="' + a.id + '">' +
+          '<div class="account-sidebar-info">' +
+            '<div class="account-sidebar-win-name">' + escapeHtml(winName) + '</div>' +
+            '<span class="account-sidebar-qq">' + escapeHtml(a.qq) + '</span>' +
+          '</div>' +
+          '<div class="account-sidebar-actions">' +
+            '<button class="account-sidebar-action-btn open" data-open-id="' + a.id + '" title="开窗并登录">⊞</button>' +
+            '<button class="account-sidebar-action-btn edit" data-edit-id="' + a.id + '" title="编辑">✏</button>' +
+            '<button class="account-sidebar-action-btn delete" data-delete-id="' + a.id + '" title="删除">✕</button>' +
+          '</div>' +
+        '</div>';
+      });
+      list.innerHTML = html;
+    }
+
+    // 显示账号模态框
+    function showAccountModal(options) {
+      const { title, qq, password, windowName, onConfirm, accountId } = options;
+
+      window.gameAPI.showModal(true);
+
+      const modal = document.createElement('div');
+      modal.className = 'add-account-modal';
+      modal.innerHTML =
+        '<div class="add-account-box">' +
+          '<h3>' + escapeHtml(title) + '</h3>' +
+          '<input class="modal-qq-input" placeholder="QQ号/邮箱" />' +
+          '<input class="modal-pwd-input" type="password" placeholder="密码（可选）" />' +
+          '<input class="modal-winname-input" placeholder="窗口名（可选）" />' +
+          '<div class="add-account-actions">' +
+            '<button class="btn-cancel" id="modalCancel">取消</button>' +
+            '<button class="btn-confirm" id="modalSave">保存</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(modal);
+
+      const qqInput = modal.querySelector('.modal-qq-input');
+      const pwdInput = modal.querySelector('.modal-pwd-input');
+      const winNameInput = modal.querySelector('.modal-winname-input');
+
+      if (qq) qqInput.value = qq;
+      if (windowName) winNameInput.value = windowName;
+
+      const close = () => {
+        modal.remove();
+        window.gameAPI.showModal(false);
+      };
+
+      modal.querySelector('#modalCancel').addEventListener('click', close);
+      modal.querySelector('#modalSave').addEventListener('click', () => {
+        onConfirm(qqInput, pwdInput, winNameInput, close);
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) close();
+      });
+    }
+
+    // 显示新账号模态框
+    function showNewAccountModal() {
+      showAccountModal({
+        title: '添加账号',
+        onConfirm: (qqInput, pwdInput, winNameInput, close) => {
+          const newQq = qqInput.value.trim();
+          const newPwd = pwdInput.value;
+          const newWinName = winNameInput.value.trim();
+
+          if (!newQq) {
+            qqInput.style.borderColor = '#ff4444';
+            return;
+          }
+
+          window.gameAPI.addAccount({ qq: newQq, password: newPwd, windowName: newWinName });
+          close();
+        }
+      });
+    }
+
+    // 显示编辑账号模态框
+    function showEditAccountModal(accountId) {
+      const account = accounts.find(a => a.id === accountId);
+      if (!account) return;
+
+      showAccountModal({
+        title: '编辑账号',
+        qq: account.qq,
+        windowName: account.windowName,
+        onConfirm: (qqInput, pwdInput, winNameInput, close) => {
+          const newQq = qqInput.value.trim();
+          const newPwd = pwdInput.value;
+          const newWinName = winNameInput.value.trim();
+
+          if (newQq && /^(\d{5,12}|[^@\s]+@[^@\s]+\.[^@\s]+)$/.test(newQq)) {
+            window.gameAPI.updateAccount({ id: accountId, qq: newQq, password: newPwd, windowName: newWinName });
+          } else if (newPwd || newWinName) {
+            window.gameAPI.updateAccount({ id: accountId, password: newPwd, windowName: newWinName });
+          }
+          close();
+        }
+      });
+    }
+
+    // 事件绑定
+    document.getElementById('tab-add').addEventListener('click', () => {
+      addTab();
+    });
+
+    tabBar.addEventListener('click', (e) => {
+      const target = e.target;
+      if (target.classList.contains('btn') || target.closest('.btn')) {
+        return;
+      }
+      const tab = target.closest('.tab');
+      if (tab) {
+        const tabIndex = parseInt(tab.dataset.tab);
+        if (e.target.classList.contains('tab-close')) {
+          removeTabByIndex(tabIndex);
+        } else {
+          const tabObj = tabs.find(t => t.index === tabIndex);
+          if (tabObj) switchTab(tabObj.id);
+        }
+      }
+    });
+
+    function removeTabByIndex(index) {
+      const tab = tabs.find(t => t.index === index);
+      if (tab) removeTab(tab.id);
+    }
+
+    document.getElementById('btn-refresh').addEventListener('click', () => {
+      window.gameAPI.refreshPage();
+    });
+
+    document.getElementById('btn-clear-cache').addEventListener('click', () => {
+      window.gameAPI.clearCache();
+    });
+
+    speedSelect.addEventListener('change', (e) => {
+      currentSpeed = parseFloat(e.target.value);
+      window.gameAPI.setSpeed(currentSpeed);
+    });
+
+    btnMute.addEventListener('click', () => {
+      isMuted = !isMuted;
+      btnMute.textContent = isMuted ? '🔇' : '🔊';
+
+      // 更新所有标签的静音状态
+      tabs.forEach(tab => {
+        if (tab._webview) {
+          try { tab._webview.setAudioMuted(isMuted); } catch (e) {}
+        }
+      });
+
+      window.gameAPI.setConfig('muted', isMuted);
+    });
+
+    document.getElementById('btn-min').addEventListener('click', () => {
+      window.gameAPI.minWindow();
+    });
+
+    document.getElementById('btn-max').addEventListener('click', () => {
+      window.gameAPI.maxWindow();
+    });
+
+    document.getElementById('btn-close').addEventListener('click', () => {
+      window.gameAPI.closeWindow();
+    });
+
+    // 账号按钮
+    document.getElementById('btn-accounts').addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const sidebar = document.getElementById('account-sidebar');
+      const isVisible = sidebar.classList.contains('visible');
+
+      if (isVisible) {
+        sidebar.classList.remove('visible');
+        window.gameAPI.toggleSidebar(false);
+      } else {
+        sidebar.classList.add('visible');
+        window.gameAPI.toggleSidebar(true);
+        window.gameAPI.getAccounts();
+      }
+    });
+
+    document.getElementById('accountSidebarClose').addEventListener('click', () => {
+      document.getElementById('account-sidebar').classList.remove('visible');
+      window.gameAPI.toggleSidebar(false);
+    });
+
+    document.getElementById('accountSidebarAdd').addEventListener('click', showNewAccountModal);
+
+    document.getElementById('accountLaunchAll').addEventListener('click', () => {
+      window.gameAPI.launchAllAccounts();
+    });
+
+    document.getElementById('account-sidebar-list').addEventListener('click', (e) => {
+      const target = e.target;
+
+      if (target.classList.contains('open') || target.closest('.open')) {
+        const btn = target.classList.contains('open') ? target : target.closest('.open');
+        const accountId = btn.dataset.openId;
+        window.gameAPI.launchAccount(accountId);
+        return;
+      }
+
+      if (target.classList.contains('edit') || target.closest('.edit')) {
+        const btn = target.classList.contains('edit') ? target : target.closest('.edit');
+        showEditAccountModal(btn.dataset.editId);
+        return;
+      }
+
+      if (target.classList.contains('delete') || target.closest('.delete')) {
+        const btn = target.classList.contains('delete') ? target : target.closest('.delete');
+        window.gameAPI.removeAccount(btn.dataset.deleteId);
+        return;
+      }
+
+      const item = target.closest('.account-sidebar-item');
+      if (item) {
+        const accountId = item.dataset.accountId;
+        window.gameAPI.fillAccount(accountId);
+      }
+    });
+
+    // IPC 事件监听
+    ipcRenderer.on('accounts-update', (event, accountList) => {
+      accounts = accountList || [];
+      renderAccountSidebar();
+    });
+
+    ipcRenderer.on('theme-update', (event, theme) => {
+      applyTheme(theme);
+    });
+
+    ipcRenderer.on('speed-update', (event, speed) => {
+      currentSpeed = speed;
+      speedSelect.value = speed;
+    });
+
+    ipcRenderer.on('mute-update', (event, muted) => {
+      isMuted = muted;
+      btnMute.textContent = isMuted ? '🔇' : '🔊';
+    });
+
+    ipcRenderer.on('game-info', (event, data) => {
+      currentGame = data.game;
+      accounts = data.accounts || [];
+
+      document.title = data.game.name;
+      document.getElementById('windowTitle').textContent = data.game.name;
+
+      // 创建第一个标签，如果有账号则传入以使用正确的 session
+      const initialAccount = data.account ? { qq: data.account.qq, qqPwd: data.account.qqPwd || '' } : null;
+      addTab('窗口1', initialAccount);
+    });
+
+    ipcRenderer.on('launch-account', (event, account) => {
+      const newTab = addTab(account.windowName || account.qq, { qq: account.qq, qqPwd: account.qqPwd || '' });
+    });
+
+    // 主题应用
+    function applyTheme(theme) {
+      const themes = {
+        light: {
+          bg1: '#ffffff',
+          bg2: '#f5f5f5',
+          border: '#e0e0e0',
+          text: '#333333',
+          btnBg: '#ffffff',
+          btnHover: '#f8f8f8',
+          btnBorder: '#dddddd',
+          separator: '#dddddd',
+          accent: '#3498db'
+        },
+        dark: {
+          bg1: '#1a1a2e',
+          bg2: '#16213e',
+          border: '#4a4a6a',
+          text: '#ffffff',
+          btnBg: '#2d2d44',
+          btnHover: '#3d3d5c',
+          btnBorder: '#5a5a7a',
+          separator: '#4a4a6a',
+          accent: '#00d4ff'
+        },
+        blue: {
+          bg1: '#0f3460',
+          bg2: '#16213e',
+          border: '#1e4d7b',
+          text: '#eaeaea',
+          btnBg: '#1a4a7a',
+          btnHover: '#2a5a8a',
+          btnBorder: '#2e6a9a',
+          separator: '#1e4d7b',
+          accent: '#4ecdc4'
+        },
+        orange: {
+          bg1: '#2d2d2d',
+          bg2: '#1a1a1a',
+          border: '#5a4a3a',
+          text: '#ffddaa',
+          btnBg: '#4a3a2a',
+          btnHover: '#5a4a3a',
+          btnBorder: '#6a5a4a',
+          separator: '#5a4a3a',
+          accent: '#ff6b35'
+        }
+      };
+
+      const t = themes[theme] || themes.light;
+      const root = document.documentElement;
+      root.style.setProperty('--bg1', t.bg1);
+      root.style.setProperty('--bg2', t.bg2);
+      root.style.setProperty('--border', t.border);
+      root.style.setProperty('--text', t.text);
+      root.style.setProperty('--btnBg', t.btnBg);
+      root.style.setProperty('--btnHover', t.btnHover);
+      root.style.setProperty('--btnBorder', t.btnBorder);
+      root.style.setProperty('--separator', t.separator);
+      root.style.setProperty('--accent', t.accent);
+    }
+
+    // 页面加载完成后请求游戏信息
+    document.addEventListener('DOMContentLoaded', () => {
+      // 等待主进程发送游戏信息
+    });
+  </script>
+</body>
+</html>

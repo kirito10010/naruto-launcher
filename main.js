@@ -312,17 +312,19 @@ function getResourcePath(...segments) {
 
 function getFlashPath() {
   const arch = process.arch === 'x64' ? '64' : '32';
+  const sysDir = process.arch === 'x64' ? 'System32' : 'SysWOW64';
   const paths = [
-    getResourcePath('flash', 'pepflashplayer.dll'),
+    // 优先使用 32.0.0.344 版本（与竞品一致，更稳定）
     getResourcePath('flash', `pepflashplayer${arch}_32_0_0_344.dll`),
-    getResourcePath('flash', arch === '64' ? 'pepflashplayer64_32_0_0_344.dll' : 'pepflashplayer32_32_0_0_344.dll'),
-    path.join(__dirname, 'flash', 'pepflashplayer.dll'),
-    'C:\\Users\\kirito\\AppData\\Roaming\\Tencent\\QQMicroGameBox\\Flash\\pepflashplayer.dll'
+    getResourcePath('flash', `pepflashplayer${arch}_34_0_0_380.dll`),
+    getResourcePath('flash', 'pepflashplayer.dll'),
+    `C:\\Windows\\${sysDir}\\Macromed\\Flash\\pepflashplayer${arch}_32_0_0_344.dll`,
+    path.join(__dirname, 'flash', 'pepflashplayer.dll')
   ];
-  
+
   for (const p of paths) {
     if (fs.existsSync(p)) {
-      log(`找到Flash插件: ${p}`);
+      log('找到Flash插件: ' + p);
       return p;
     }
   }
@@ -350,16 +352,253 @@ function flushLogBuffer() {
 
 function log(message, level = 'INFO') {
   if (level !== 'ERROR' && level !== 'WARN') return;
-  
+
   const timestamp = new Date().toISOString();
   const logEntry = `[${timestamp}] [${level}] ${message}\n`;
-  
+
   logBuffer.push(logEntry);
-  
+
   if (logBuffer.length >= MAX_LOG_BUFFER) {
     flushLogBuffer();
   }
 }
+
+// ========== 自动清理功能 ==========
+
+const CLEANUP_CONFIG = {
+  // 日志文件最大大小（5MB）
+  maxLogSize: 1024 * 1024 * 5,
+  // 日志保留天数
+  logRetainDays: 7,
+  // 缓存保留天数
+  cacheRetainDays: 3,
+  // 单次清理最大文件数
+  maxFilesPerCleanup: 500
+};
+
+/**
+ * 安全的删除目录（递归）
+ */
+function safeRemoveDir(dirPath) {
+  try {
+    if (!fs.existsSync(dirPath)) return;
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) return;
+
+    const entries = fs.readdirSync(dirPath);
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry);
+      const entryStat = fs.statSync(fullPath);
+      if (entryStat.isDirectory()) {
+        safeRemoveDir(fullPath);
+      } else {
+        try {
+          fs.unlinkSync(fullPath);
+        } catch (e) {}
+      }
+    }
+    fs.rmdirSync(dirPath);
+  } catch (e) {}
+}
+
+/**
+ * 安全的删除文件
+ */
+function safeRemoveFile(filePath) {
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (e) {}
+}
+
+/**
+ * 检查文件/目录是否过期
+ */
+function isExpired(filePath, retainDays) {
+  try {
+    const stat = fs.statSync(filePath);
+    const now = Date.now();
+    const age = now - stat.mtimeMs;
+    return age > retainDays * 24 * 60 * 60 * 1000;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * 清理日志文件 - 限制大小并轮转
+ */
+function cleanupLogFile() {
+  try {
+    if (!fs.existsSync(LOG_FILE)) return;
+
+    const stats = fs.statSync(LOG_FILE);
+    if (stats.size > CLEANUP_CONFIG.maxLogSize) {
+      // 超过限制，备份旧日志并创建新日志
+      const backupPath = LOG_FILE + '.old';
+      safeRemoveFile(backupPath);
+      fs.renameSync(LOG_FILE, backupPath);
+      log('日志文件超过限制已轮转', 'INFO');
+    }
+
+    // 删除超过保留期的旧日志备份
+    const oldLogPath = LOG_FILE + '.old';
+    if (fs.existsSync(oldLogPath) && isExpired(oldLogPath, CLEANUP_CONFIG.logRetainDays)) {
+      safeRemoveFile(oldLogPath);
+      log('删除过期日志备份', 'INFO');
+    }
+  } catch (e) {
+    console.error('清理日志失败:', e);
+  }
+}
+
+/**
+ * 清理 Electron 缓存目录
+ */
+function cleanupElectronCache() {
+  const userDataPath = app.getPath('userData');
+  const cacheDirs = [
+    'GPUCache',
+    'Code Cache',
+    'blob_storage',
+    'Session Storage',
+    'Service Worker',
+    'shared_proto_db'
+  ];
+
+  let cleanedCount = 0;
+  for (const dirName of cacheDirs) {
+    const dirPath = path.join(userDataPath, dirName);
+    if (fs.existsSync(dirPath)) {
+      safeRemoveDir(dirPath);
+      cleanedCount++;
+    }
+  }
+
+  if (cleanedCount > 0) {
+    log(`清理 Electron 缓存目录: ${cleanedCount} 个`, 'INFO');
+  }
+}
+
+/**
+ * 清理未使用的 persist session 分区数据
+ * 只保留当前活跃的 session，清理过期的
+ */
+function cleanupUnusedSessions() {
+  const userDataPath = app.getPath('userData');
+  const partitionsDir = path.join(userDataPath, 'Partitions');
+
+  if (!fs.existsSync(partitionsDir)) return;
+
+  try {
+    const entries = fs.readdirSync(partitionsDir);
+    let cleanedCount = 0;
+
+    for (const entry of entries) {
+      const partitionPath = path.join(partitionsDir, entry);
+      const stat = fs.statSync(partitionPath);
+
+      if (!stat.isDirectory()) continue;
+
+      // 只清理过期的 session 分区（超过保留期）
+      if (isExpired(partitionPath, CLEANUP_CONFIG.cacheRetainDays)) {
+        safeRemoveDir(partitionPath);
+        cleanedCount++;
+      }
+    }
+
+    if (cleanedCount > 0) {
+      log(`清理过期 Session 分区: ${cleanedCount} 个`, 'INFO');
+    }
+  } catch (e) {
+    console.error('清理 session 失败:', e);
+  }
+}
+
+/**
+ * 清理更新下载的临时文件
+ */
+function cleanupUpdateTempFiles() {
+  const userDataPath = app.getPath('userData');
+  const pendingUpdateDir = path.join(userDataPath, 'pending');
+
+  if (fs.existsSync(pendingUpdateDir)) {
+    safeRemoveDir(pendingUpdateDir);
+    log('清理更新临时文件', 'INFO');
+  }
+
+  // 清理可能残留的更新包
+  try {
+    const entries = fs.readdirSync(userDataPath);
+    for (const entry of entries) {
+      if (entry.endsWith('.exe') || entry.endsWith('.zip') || entry.endsWith('.7z')) {
+        const filePath = path.join(userDataPath, entry);
+        if (isExpired(filePath, 1)) {
+          safeRemoveFile(filePath);
+        }
+      }
+    }
+  } catch (e) {}
+}
+
+/**
+ * 清理 Local Storage 中过期的游戏数据（保留 config）
+ */
+function cleanupLocalStorage() {
+  const userDataPath = app.getPath('userData');
+  const localStorageDir = path.join(userDataPath, 'Local Storage');
+
+  if (!fs.existsSync(localStorageDir)) return;
+
+  try {
+    const entries = fs.readdirSync(localStorageDir);
+    for (const entry of entries) {
+      const entryPath = path.join(localStorageDir, entry);
+      if (isExpired(entryPath, CLEANUP_CONFIG.cacheRetainDays)) {
+        const stat = fs.statSync(entryPath);
+        if (stat.isDirectory()) {
+          safeRemoveDir(entryPath);
+        } else {
+          safeRemoveFile(entryPath);
+        }
+      }
+    }
+  } catch (e) {}
+}
+
+/**
+ * 主清理函数 - 应用启动时调用
+ */
+function performStartupCleanup() {
+  log('开始启动清理...', 'INFO');
+
+  cleanupLogFile();
+  cleanupElectronCache();
+  cleanupUnusedSessions();
+  cleanupUpdateTempFiles();
+  cleanupLocalStorage();
+
+  log('启动清理完成', 'INFO');
+}
+
+/**
+ * 退出时清理 - 清理临时数据
+ */
+function performExitCleanup() {
+  try {
+    // 清理当前会话的临时缓存
+    const defaultSession = require('electron').session.defaultSession;
+    if (defaultSession) {
+      defaultSession.clearCache().catch(() => {});
+    }
+
+    // 确保日志已写入
+    flushLogBuffer();
+  } catch (e) {}
+}
+
+// ========== 自动清理结束 ==========
 
 function detectWindowsVersion() {
   try {
@@ -642,7 +881,17 @@ async function secondPass() {
 }
 
 const FLASH_PATH = getFlashPath();
-const FLASH_VERSION = FLASH_PATH && FLASH_PATH.includes('32_0_0_344') ? '32.0.0.344' : '34.0.0.242';
+
+function detectFlashVersion(flashPath) {
+  if (!flashPath) return '34.0.0.380';
+  const match = flashPath.match(/(\d+_\d+_\d+_\d+)/);
+  if (match) {
+    return match[1].replace(/_/g, '.');
+  }
+  return '34.0.0.380';
+}
+
+const FLASH_VERSION = detectFlashVersion(FLASH_PATH);
 
 if (FLASH_PATH) {
   app.commandLine.appendSwitch('ppapi-flash-path', FLASH_PATH);
@@ -651,6 +900,9 @@ if (FLASH_PATH) {
 } else {
   log('Flash插件未找到！', 'ERROR');
 }
+
+// 确保 Flash 对所有页面可用
+app.commandLine.appendSwitch('ppapi-flash-Allow-Windows-Sandbox', 'true');
 
 app.commandLine.appendSwitch('allow-running-insecure-content');
 app.commandLine.appendSwitch('ignore-certificate-errors');
@@ -954,11 +1206,11 @@ function createLauncherWindow() {
 
 function createGameWindow(url, gameName, account) {
   if (!url) url = DEFAULT_URL;
-  if (!gameName) gameName = '游戏';
-  
+  if (!gameName) gameName = '火影忍者Online';
+
   const displays = screen.getAllDisplays();
   let primaryDisplay = screen.getPrimaryDisplay();
-  
+
   if (displays.length > 1) {
     const mousePos = screen.getCursorScreenPoint();
     const currentDisplay = displays.find(display => {
@@ -970,18 +1222,16 @@ function createGameWindow(url, gameName, account) {
       primaryDisplay = currentDisplay;
     }
   }
-  
+
   const { width, height } = primaryDisplay.workAreaSize;
   const toolbarHeight = 36;
-  
+
   const maxGameWidth = 1440;
   const maxGameHeight = 810;
-  
+
   const gameWidth = Math.min(Math.floor(width * 0.95), maxGameWidth);
   const gameHeight = Math.min(Math.floor(height * 0.95) - toolbarHeight, maxGameHeight);
 
-  const colors = getThemeColors();
-  
   const win = new BrowserWindow({
     width: gameWidth,
     height: gameHeight + toolbarHeight,
@@ -996,902 +1246,43 @@ function createGameWindow(url, gameName, account) {
       zoomFactor: 1.0,
       defaultFontSize: 16,
       backgroundThrottling: false,
-      offscreen: false
+      offscreen: false,
+      webviewTag: true,
+      partition: 'persist:game'
     },
     show: true,
     fullscreenable: true,
-    simpleFullscreen: false
+    simpleFullscreen: false,
+    skipTaskbar: false
   });
-  
+
   win.webContents.setZoomFactor(1.0);
   win.webContents.setBackgroundThrottling(false);
 
   win.setMenu(null);
-  
-  const windowId = gameWindows.length + 1;
-  let localTabs = [];
-  let localCurrentTabIndex = 0;
-  
-  function addTab(tabUrl, tabName, acc) {
-    const tabIndex = localTabs.length + 1;
-    const accForSession = acc || (localTabs.length === 0 ? account : null);
-    const sessionId = accForSession && accForSession.qq ? `persist:qq-${accForSession.qq}` : `persist:game-session-${windowId}-${tabIndex}`;
-    const session = require('electron').session.fromPartition(sessionId, {
-      cache: true,
-      storage: sessionId
-    });
-    
-    // Cookie 监听器仅用于调试，游戏运行时不需要日志输出
-    session.cookies.on('changed', () => {});
 
-    const { BrowserView } = require('electron');
-    const view = new BrowserView({
-      webPreferences: {
-        plugins: true,
-        nodeIntegration: false,
-        contextIsolation: true,
-        preload: path.join(__dirname, 'preload.js'),
-        webSecurity: false,
-        allowRunningInsecureContent: true,
-        session: session,
-        enableRemoteModule: false,
-        sandbox: false,
-        backgroundThrottling: false,
-        offscreen: false,
-        enablePreferredSizeMode: false,
-        partition: sessionId,
-        disableBlinkFeatures: 'AutomationControlled',
-        disableSiteIsolationTrials: true,
-        enableWebGL: true,
-        experimentalFeatures: false,
-        experimentalCanvasFeatures: false,
-        enableWebAudio: true,
-        spellcheck: false,
-        enableLabsExperiments: false,
-        enableCrashReporter: false
-      }
-    });
-    
-    view.webContents.setBackgroundThrottling(false);
-    view.webContents.setFrameRate(60);
+  // 加载 game.html
+  win.loadFile('game.html');
 
-    win.addBrowserView(view);
-    
-    const contentBounds = win.getContentBounds();
-    view.setBounds({ x: 0, y: toolbarHeight, width: contentBounds.width, height: contentBounds.height - toolbarHeight });
-
-    const webContents = view.webContents;
-    
-    webContents.loadURL(tabUrl);
-
-    const tabInfo = {
-      index: tabIndex,
-      name: tabName,
-      view: view,
-      webContents: webContents,
-      speedRate: 1,
-      _pendingAccount: null
+  win.webContents.on('did-finish-load', () => {
+    // 发送游戏信息给 game.html
+    const gameInfo = {
+      name: gameName,
+      url: url
     };
-
-    localTabs.push(tabInfo);
-    
-    const gameWinIndex = gameWindows.findIndex(w => w.win === win);
-    if (gameWinIndex !== -1) {
-      gameWindows[gameWinIndex].localTabs = localTabs;
-    }
-    
-    updateToolbarTabList();
-    switchTab(tabIndex);
-    
-    function tryAutoLogin() {
-      if (!tabInfo._pendingAccount) return;
-      
-      const acc = tabInfo._pendingAccount;
-      injectQuickLogin(webContents, acc.qq, acc.qqPwd);
-      tabInfo._pendingAccount = null;
-    }
-    
-    webContents.on('did-finish-load', () => {
-      log('Tab' + tabIndex + ' 加载完成');
-      injectAllChildProcesses();
-      tryAutoLogin();
+    win.webContents.send('game-info', {
+      game: gameInfo,
+      accounts: accounts,
+      account: account
     });
 
-    webContents.on('did-navigate', () => {
-      tryAutoLogin();
-    });
+    // 发送当前配置
+    win.webContents.send('theme-update', currentTheme);
+    win.webContents.send('speed-update', currentSpeedRate);
+    win.webContents.send('mute-update', isAudioMuted);
 
-    webContents.on('new-window', (event, newUrl) => {
-      event.preventDefault();
-      webContents.loadURL(newUrl);
-    });
-
-    return tabInfo;
-  }
-
-  function switchTab(index) {
-    if (index < 1 || index > localTabs.length) return;
-    
-    const targetIndex = index - 1;
-    const bounds = win.getBounds();
-    
-    localTabs.forEach((tab, idx) => {
-      if (idx === targetIndex) {
-        tab.view.setBounds({ x: 0, y: toolbarHeight, width: bounds.width, height: bounds.height - toolbarHeight });
-        win.addBrowserView(tab.view);
-      } else {
-        tab.view.setBounds({ x: 0, y: bounds.height, width: bounds.width, height: 0 });
-      }
-    });
-    localCurrentTabIndex = targetIndex;
-    
-    const gameWinIndex = gameWindows.findIndex(w => w.win === win);
-    if (gameWinIndex !== -1) {
-      gameWindows[gameWinIndex].localCurrentTabIndex = localCurrentTabIndex;
-    }
-    
-    const activeTab = localTabs[localCurrentTabIndex];
-    if (activeTab && activeTab.webContents) {
-      activeTab.webContents.setAudioMuted(isAudioMuted);
-    }
-    
-    updateToolbarTabList();
-  }
-
-  function closeTab(index) {
-    if (index < 1 || index > localTabs.length) return;
-    
-    const targetIndex = index - 1;
-    const tabToClose = localTabs[targetIndex];
-    
-    if (!tabToClose) return;
-    
-    if (tabToClose.webContents) {
-      try {
-        tabToClose.webContents.setAudioMuted(true);
-        tabToClose.webContents.removeAllListeners();
-        if (typeof tabToClose.webContents.destroy === 'function') {
-          tabToClose.webContents.destroy();
-        }
-      } catch (e) {}
-    }
-    if (tabToClose.view) {
-      try {
-        win.removeBrowserView(tabToClose.view);
-        tabToClose.view.destroy();
-      } catch (e) {}
-    }
-    
-    localTabs[targetIndex] = null;
-    localTabs.splice(targetIndex, 1);
-    
-    if (localTabs.length === 0) {
-      localTabs = null;
-      win.close();
-      return;
-    }
-    
-    if (localCurrentTabIndex >= localTabs.length) {
-      localCurrentTabIndex = localTabs.length - 1;
-    }
-    
-    const gameWinIndex = gameWindows.findIndex(w => w.win === win);
-    if (gameWinIndex !== -1) {
-      gameWindows[gameWinIndex].localTabs = localTabs;
-      gameWindows[gameWinIndex].localCurrentTabIndex = localCurrentTabIndex;
-    }
-    
-    switchTab(localCurrentTabIndex + 1);
-    updateToolbarTabList();
-  }
-
-  function updateToolbarTabList() {
-    const tabList = localTabs.map((tab, idx) => ({ index: idx + 1, name: tab.name || ('窗口' + (idx + 1)) }));
-    win.webContents.send('update-tab-list', { tabs: tabList, currentIndex: localCurrentTabIndex + 1 });
-  }
-
-  const toolbarHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      background: linear-gradient(180deg, ${colors.bg1} 0%, ${colors.bg2} 100%);
-      height: 36px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 8px;
-      -webkit-app-region: drag;
-      overflow: hidden;
-      border-bottom: 1px solid ${colors.border};
-    }
-    .toolbar-left { display: flex; align-items: center; gap: 4px; flex: 1; }
-    .toolbar-center { display: flex; align-items: center; gap: 8px; -webkit-app-region: no-drag; }
-    .toolbar-right { display: flex; align-items: center; gap: 8px; -webkit-app-region: no-drag; }
-    .title {
-      color: ${colors.text};
-      font-size: 13px;
-      font-weight: 500;
-      margin-right: 8px;
-    }
-    .tabs-container {
-      display: flex;
-      align-items: center;
-      gap: 2px;
-    }
-    .tab {
-      height: 28px;
-      padding: 0 12px;
-      border: 1px solid ${colors.border};
-      border-radius: 4px 4px 0 0;
-      background: linear-gradient(${colors.btnBg}, ${colors.btnHover});
-      color: ${colors.text};
-      font-size: 12px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      -webkit-app-region: no-drag;
-    }
-    .tab:hover {
-      background: linear-gradient(${colors.btnHover}, #e8e8e8);
-    }
-    .tab.active {
-      background: #fff;
-      border-bottom-color: #fff;
-      color: #333;
-    }
-    .tab-close {
-      font-size: 10px;
-      opacity: 0.6;
-    }
-    .tab-close:hover {
-      opacity: 1;
-      color: #e74c3c;
-    }
-    .tab-add {
-      height: 28px;
-      width: 28px;
-      border: 1px solid ${colors.border};
-      border-radius: 4px;
-      background: linear-gradient(${colors.btnBg}, ${colors.btnHover});
-      color: ${colors.text};
-      font-size: 16px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      -webkit-app-region: no-drag;
-    }
-    .tab-add:hover {
-      background: linear-gradient(${colors.btnHover}, #e8e8e8);
-    }
-    .btn {
-      height: 24px;
-      padding: 0 12px;
-      border: 1px solid ${colors.border};
-      border-radius: 4px;
-      background: linear-gradient(${colors.btnBg}, ${colors.btnHover});
-      color: ${colors.text};
-      font-size: 12px;
-      cursor: pointer;
-      outline: none;
-      font-family: 'Microsoft YaHei', sans-serif;
-      min-width: 40px;
-      transition: all .15s;
-      -webkit-app-region: no-drag;
-    }
-    .btn:hover {
-      background: linear-gradient(${colors.btnHover}, #e8e8e8);
-      border-color: #ccc;
-    }
-    .btn:active {
-      background: linear-gradient(#e8e8e8, #d8d8d8);
-    }
-    .btn.active {
-      background: linear-gradient(#e74c3c, #c0392b);
-      border-color: #a0291b;
-      color: #fff;
-    }
-    .separator {
-      width: 1px;
-      height: 18px;
-      background: ${colors.separator};
-    }
-    .select-container {
-      position: relative;
-    }
-    .select-container select {
-      height: 24px;
-      padding: 0 24px 0 8px;
-      border: 1px solid ${colors.border};
-      border-radius: 4px;
-      background: ${colors.btnBg};
-      color: ${colors.text};
-      font-size: 12px;
-      cursor: pointer;
-      outline: none;
-      font-family: 'Microsoft YaHei', sans-serif;
-      min-width: 70px;
-      appearance: none;
-      -webkit-appearance: none;
-    }
-    .select-container::after {
-      content: '▼';
-      position: absolute;
-      right: 6px;
-      top: 50%;
-      transform: translateY(-50%);
-      font-size: 8px;
-      color: ${colors.text};
-      pointer-events: none;
-    }
-    .window-controls {
-      display: flex;
-      gap: 4px;
-    }
-    .control-btn {
-      width: 28px;
-      height: 24px;
-      border: none;
-      background: transparent;
-      color: ${colors.text};
-      font-size: 12px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      -webkit-appearance: none;
-    }
-    .control-btn:hover {
-      background: rgba(0,0,0,.05);
-    }
-    .control-btn.close:hover {
-      background: #e74c3c;
-      color: #fff;
-    }
-    .account-sidebar {
-      position: fixed;
-      right: -280px;
-      top: 36px;
-      width: 280px;
-      height: calc(100vh - 36px);
-      background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
-      border-left: 1px solid #4a4a6a;
-      transition: right 0.3s ease;
-      z-index: 1000;
-      display: flex;
-      flex-direction: column;
-    }
-    .account-sidebar.visible {
-      right: 0;
-    }
-    .account-sidebar-header {
-      display: flex;
-      align-items: center;
-      padding: 12px 16px;
-      border-bottom: 1px solid #4a4a6a;
-      gap: 8px;
-    }
-    .account-sidebar-header h3 {
-      color: #fff;
-      font-size: 14px;
-      flex: 1;
-      margin: 0;
-    }
-    .account-sidebar-btn {
-      padding: 6px 12px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 12px;
-      transition: all 0.2s;
-    }
-    .account-sidebar-add {
-      background: #00d4ff;
-      color: #1a1a2e;
-      font-weight: bold;
-    }
-    .account-sidebar-add:hover {
-      background: #00b8e6;
-    }
-    .account-sidebar-launch-all {
-      background: #10b981;
-      color: #fff;
-    }
-    .account-sidebar-launch-all:hover {
-      background: #059669;
-    }
-    .account-sidebar-close {
-      background: transparent;
-      color: #aaa;
-      padding: 4px 8px;
-    }
-    .account-sidebar-close:hover {
-      color: #fff;
-    }
-    .account-sidebar-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 8px;
-    }
-    .account-sidebar-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 12px;
-      background: #2d2d44;
-      border-radius: 6px;
-      margin-bottom: 6px;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    .account-sidebar-item:hover {
-      background: #3d3d5c;
-    }
-    .account-sidebar-info {
-      flex: 1;
-      min-width: 0;
-    }
-    .account-sidebar-win-name {
-      color: #00d4ff;
-      font-size: 13px;
-      font-weight: 500;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .account-sidebar-qq {
-      color: #aaa;
-      font-size: 11px;
-    }
-    .account-sidebar-actions {
-      display: flex;
-      gap: 4px;
-      opacity: 0;
-      transition: opacity 0.2s;
-    }
-    .account-sidebar-item:hover .account-sidebar-actions {
-      opacity: 1;
-    }
-    .account-sidebar-action-btn {
-      width: 24px;
-      height: 24px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      background: rgba(255,255,255,0.1);
-      color: #fff;
-    }
-    .account-sidebar-action-btn:hover {
-      background: rgba(255,255,255,0.2);
-    }
-    .account-sidebar-action-btn.open {
-      color: #10b981;
-    }
-    .account-sidebar-action-btn.edit {
-      color: #ffd700;
-    }
-    .account-sidebar-action-btn.delete {
-      color: #e74c3c;
-    }
-    .account-sidebar-hint {
-      text-align: center;
-      color: #666;
-      font-size: 12px;
-      padding: 20px;
-    }
-    .add-account-modal {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.7);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 2000;
-    }
-    .add-account-box {
-      background: #2d2d44;
-      border-radius: 12px;
-      padding: 24px;
-      width: 320px;
-    }
-    .add-account-box h3 {
-      color: #fff;
-      font-size: 16px;
-      margin-bottom: 16px;
-      text-align: center;
-    }
-    .add-account-box input {
-      width: 100%;
-      padding: 10px 12px;
-      border: 1px solid #4a4a6a;
-      border-radius: 6px;
-      background: #1a1a2e;
-      color: #fff;
-      font-size: 13px;
-      margin-bottom: 10px;
-      outline: none;
-    }
-    .add-account-box input:focus {
-      border-color: #00d4ff;
-    }
-    .add-account-box input::placeholder {
-      color: #666;
-    }
-    .add-account-actions {
-      display: flex;
-      gap: 10px;
-      margin-top: 16px;
-    }
-    .add-account-actions button {
-      flex: 1;
-      padding: 10px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 13px;
-    }
-    .btn-cancel {
-      background: #4a4a6a;
-      color: #fff;
-    }
-    .btn-cancel:hover {
-      background: #5a5a7a;
-    }
-    .btn-confirm {
-      background: #00d4ff;
-      color: #1a1a2e;
-      font-weight: bold;
-    }
-    .btn-confirm:hover {
-      background: #00b8e6;
-    }
-  </style>
-</head>
-<body>
-  <div class="toolbar-left">
-    <span class="title">${gameName}</span>
-    <div class="tabs-container" id="tabs-container">
-      <div class="tab active" data-tab="1">
-        <span>窗口1</span>
-        <span class="tab-close" data-tab="1">×</span>
-      </div>
-      <div class="tab-add" id="tab-add">+</div>
-    </div>
-  </div>
-  <div class="toolbar-center">
-    <button class="btn" id="btn-refresh" title="刷新页面（保留登录状态）">刷新</button>
-    <button class="btn" id="btn-clear-cache" title="清空缓存并重新加载">清空缓存</button>
-    <div class="separator"></div>
-    <button class="btn" id="btn-accounts" title="账号管理">👤 账号</button>
-    <div class="separator"></div>
-    <div class="select-container">
-      <select id="speed-select">
-        <option value="1"${currentSpeedRate === 1 ? ' selected' : ''}>1x (还原)</option>
-        <option value="2"${currentSpeedRate === 2 ? ' selected' : ''}>2x</option>
-        <option value="4"${currentSpeedRate === 4 ? ' selected' : ''}>4x</option>
-        <option value="6"${currentSpeedRate === 6 ? ' selected' : ''}>6x</option>
-        <option value="10"${currentSpeedRate === 10 ? ' selected' : ''}>10x</option>
-        <option value="20"${currentSpeedRate === 20 ? ' selected' : ''}>20x</option>
-        <option value="0.5"${currentSpeedRate === 0.5 ? ' selected' : ''}>0.5x (减速)</option>
-      </select>
-    </div>
-    <div class="separator"></div>
-    <button class="btn" id="btn-mute" title="切换静音">${isAudioMuted ? '🔇' : '🔊'}</button>
-  </div>
-  <div class="toolbar-right">
-    <div class="window-controls">
-      <button class="control-btn" id="btn-min">-</button>
-      <button class="control-btn" id="btn-max">□</button>
-      <button class="control-btn close" id="btn-close">×</button>
-    </div>
-  </div>
-  
-  <div class="account-sidebar" id="account-sidebar">
-    <div class="account-sidebar-header">
-      <h3>账号列表</h3>
-      <button class="account-sidebar-btn account-sidebar-launch-all" id="accountLaunchAll" title="一键启动全部">一键启动</button>
-      <button class="account-sidebar-btn account-sidebar-add" id="accountSidebarAdd" title="添加账号">+</button>
-      <button class="account-sidebar-btn account-sidebar-close" id="accountSidebarClose" title="关闭">×</button>
-    </div>
-    <div class="account-sidebar-list" id="account-sidebar-list">
-    </div>
-  </div>
-  
-  <script>
-    const { ipcRenderer } = require('electron');
-    let isMuted = ${isAudioMuted ? 'true' : 'false'};
-    
-    document.getElementById('tab-add').addEventListener('click', () => {
-      ipcRenderer.send('new-tab');
-    });
-    
-    document.getElementById('tabs-container').addEventListener('click', (e) => {
-      const target = e.target;
-      if (target.classList.contains('btn') || target.closest('.btn')) {
-        return;
-      }
-      const tab = target.closest('.tab');
-      if (tab) {
-        const tabIndex = parseInt(tab.dataset.tab);
-        if (e.target.classList.contains('tab-close')) {
-          ipcRenderer.send('close-tab', tabIndex);
-        } else {
-          ipcRenderer.send('switch-tab', tabIndex);
-        }
-      }
-    });
-    
-    document.getElementById('btn-refresh').addEventListener('click', () => {
-      ipcRenderer.send('refresh-page');
-    });
-    
-    document.getElementById('btn-clear-cache').addEventListener('click', () => {
-      ipcRenderer.send('clear-cache');
-    });
-    
-    document.getElementById('speed-select').addEventListener('change', (e) => {
-      ipcRenderer.send('set-game-speed', parseFloat(e.target.value));
-    });
-    
-    document.getElementById('btn-mute').addEventListener('click', () => {
-      isMuted = !isMuted;
-      const btn = document.getElementById('btn-mute');
-      btn.textContent = isMuted ? '🔇' : '🔊';
-      ipcRenderer.send('toggle-mute', isMuted);
-    });
-    
-    document.getElementById('btn-min').addEventListener('click', () => {
-      ipcRenderer.send('min-window');
-    });
-    
-    document.getElementById('btn-max').addEventListener('click', () => {
-      ipcRenderer.send('max-window');
-    });
-    
-    document.getElementById('btn-close').addEventListener('click', () => {
-      ipcRenderer.send('close-window');
-    });
-    
-    ipcRenderer.on('speed-update', (event, speed) => {
-      document.getElementById('speed-select').value = speed;
-    });
-    
-    ipcRenderer.on('update-tab-list', (event, data) => {
-      const container = document.getElementById('tabs-container');
-      container.innerHTML = '';
-      
-      data.tabs.forEach(function(tab) {
-        const tabEl = document.createElement('div');
-        tabEl.className = 'tab' + (tab.index === data.currentIndex ? ' active' : '');
-        tabEl.dataset.tab = tab.index;
-        tabEl.innerHTML = '<span>' + tab.name + '</span><span class="tab-close" data-tab="' + tab.index + '">×</span>';
-        container.appendChild(tabEl);
-      });
-      
-      const addBtn = document.createElement('div');
-      addBtn.className = 'tab-add';
-      addBtn.id = 'tab-add';
-      addBtn.textContent = '+';
-      addBtn.addEventListener('click', () => {
-        ipcRenderer.send('new-tab');
-      });
-      container.appendChild(addBtn);
-    });
-    
-    ipcRenderer.on('theme-update', (event, theme) => {
-      ipcRenderer.send('reload-with-theme', theme);
-    });
-    
-    ipcRenderer.on('mute-update', (event, muted) => {
-      isMuted = muted;
-      const btn = document.getElementById('btn-mute');
-      btn.textContent = isMuted ? '🔇' : '🔊';
-    });
-    
-    let accounts = [];
-    
-    function renderAccountSidebar() {
-      const list = document.getElementById('account-sidebar-list');
-      const items = accounts.filter(a => a.qq);
-      
-      if (items.length === 0) {
-        list.innerHTML = '<div class="account-sidebar-hint">暂无账号<br>点击 + 添加</div>';
-        return;
-      }
-      
-      let html = '';
-      items.forEach(function(a) {
-        const winName = a.windowName || a.qq;
-        html += '<div class="account-sidebar-item" data-account-id="' + a.id + '">' +
-          '<div class="account-sidebar-info">' +
-            '<div class="account-sidebar-win-name">' + escapeHtml(winName) + '</div>' +
-            '<span class="account-sidebar-qq">' + escapeHtml(a.qq) + '</span>' +
-          '</div>' +
-          '<div class="account-sidebar-actions">' +
-            '<button class="account-sidebar-action-btn open" data-open-id="' + a.id + '" title="开窗并登录">⊞</button>' +
-            '<button class="account-sidebar-action-btn edit" data-edit-id="' + a.id + '" title="编辑">✏</button>' +
-            '<button class="account-sidebar-action-btn delete" data-delete-id="' + a.id + '" title="删除">✕</button>' +
-          '</div>' +
-        '</div>';
-      });
-      list.innerHTML = html;
-    }
-    
-    function escapeHtml(str) {
-      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-    
-    function showAccountModal(options) {
-      const { title, qq, password, windowName, onConfirm } = options;
-      
-      ipcRenderer.send('show-modal', true);
-      
-      const modal = document.createElement('div');
-      modal.className = 'add-account-modal';
-      modal.innerHTML =
-        '<div class="add-account-box">' +
-          '<h3>' + escapeHtml(title) + '</h3>' +
-          '<input class="modal-qq-input" placeholder="QQ号/邮箱" />' +
-          '<input class="modal-pwd-input" type="password" placeholder="密码（可选）" />' +
-          '<input class="modal-winname-input" placeholder="窗口名（可选）" />' +
-          '<div class="add-account-actions">' +
-            '<button class="btn-cancel" id="modalCancel">取消</button>' +
-            '<button class="btn-confirm" id="modalSave">保存</button>' +
-          '</div>' +
-        '</div>';
-      document.body.appendChild(modal);
-      
-      const qqInput = modal.querySelector('.modal-qq-input');
-      const pwdInput = modal.querySelector('.modal-pwd-input');
-      const winNameInput = modal.querySelector('.modal-winname-input');
-      
-      if (qq) qqInput.value = qq;
-      if (windowName) winNameInput.value = windowName;
-      
-      qqInput.addEventListener('input', () => {
-        qqInput.style.borderColor = '';
-      });
-      
-      const close = () => {
-        modal.remove();
-        ipcRenderer.send('show-modal', false);
-      };
-      
-      modal.querySelector('#modalCancel').addEventListener('click', close);
-      modal.querySelector('#modalSave').addEventListener('click', () => {
-        onConfirm(qqInput, pwdInput, winNameInput, close);
-      });
-      
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) close();
-      });
-    }
-    
-    function showNewAccountModal() {
-      showAccountModal({
-        title: '添加账号',
-        onConfirm: (qqInput, pwdInput, winNameInput, close) => {
-          const newQq = qqInput.value.trim();
-          const newPwd = pwdInput.value;
-          const newWinName = winNameInput.value.trim();
-          
-          if (!newQq) {
-            qqInput.style.borderColor = '#ff4444';
-            return;
-          }
-          
-          ipcRenderer.send('add-account', { qq: newQq, password: newPwd, windowName: newWinName });
-          close();
-        }
-      });
-    }
-    
-    function showEditAccountModal(accountId) {
-      const account = accounts.find(a => a.id === accountId);
-      if (!account) return;
-      
-      showAccountModal({
-        title: '编辑账号',
-        qq: account.qq,
-        windowName: account.windowName,
-        onConfirm: (qqInput, pwdInput, winNameInput, close) => {
-          const newQq = qqInput.value.trim();
-          const newPwd = pwdInput.value;
-          const newWinName = winNameInput.value.trim();
-          
-          if (newQq && /^(\d{5,12}|[^@\s]+@[^@\s]+\.[^@\s]+)$/.test(newQq)) {
-            ipcRenderer.send('update-account', { id: accountId, qq: newQq, password: newPwd, windowName: newWinName });
-          } else if (newPwd || newWinName) {
-            ipcRenderer.send('update-account', { id: accountId, password: newPwd, windowName: newWinName });
-          }
-          close();
-        }
-      });
-    }
-    
-    document.getElementById('btn-accounts').addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      console.log('[TOOLBAR] 点击账号按钮');
-      
-      const sidebar = document.getElementById('account-sidebar');
-      if (sidebar) {
-        const isVisible = sidebar.classList.contains('visible');
-        
-        if (isVisible) {
-          sidebar.classList.remove('visible');
-          ipcRenderer.send('toggle-sidebar', false);
-        } else {
-          sidebar.classList.add('visible');
-          ipcRenderer.send('toggle-sidebar', true);
-          ipcRenderer.send('get-accounts');
-        }
-      }
-    });
-    
-    document.getElementById('accountSidebarClose').addEventListener('click', () => {
-      document.getElementById('account-sidebar').classList.remove('visible');
-      ipcRenderer.send('toggle-sidebar', false);
-    });
-    
-    document.getElementById('accountSidebarAdd').addEventListener('click', showNewAccountModal);
-    
-    document.getElementById('accountLaunchAll').addEventListener('click', () => {
-      ipcRenderer.send('launch-all-accounts');
-    });
-    
-    document.getElementById('account-sidebar-list').addEventListener('click', (e) => {
-      const target = e.target;
-      
-      if (target.classList.contains('open')) {
-        const accountId = target.dataset.openId;
-        ipcRenderer.send('launch-account', accountId);
-        return;
-      }
-      
-      if (target.classList.contains('edit')) {
-        showEditAccountModal(target.dataset.editId);
-        return;
-      }
-      
-      if (target.classList.contains('delete')) {
-        ipcRenderer.send('remove-account', target.dataset.deleteId);
-        return;
-      }
-      
-      const item = target.closest('.account-sidebar-item');
-      if (item) {
-        const accountId = item.dataset.accountId;
-        ipcRenderer.send('fill-account', accountId);
-      }
-    });
-    
-    ipcRenderer.on('accounts-update', (event, accountList) => {
-      accounts = accountList || [];
-      renderAccountSidebar();
-    });
-    
-    ipcRenderer.on('account-updated', () => {
-      ipcRenderer.send('get-accounts');
-    });
-  </script>
-</body>
-</html>`;
-
-  win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(toolbarHtml));
-
-  addTab(url, '窗口1', account);
+    log('游戏窗口加载完成');
+  });
 
   const ipcListeners = [];
 
@@ -1900,25 +1291,17 @@ function createGameWindow(url, gameName, account) {
     ipcListeners.push({ channel, handler });
   };
 
+  // 游戏窗口内的 IPC 处理
   addListener('new-tab', (event) => {
-    const senderWin = BrowserWindow.fromWebContents(event.sender);
-    if (senderWin === win) {
-      addTab(DEFAULT_URL, '窗口' + (localTabs.length + 1));
-    }
+    // 游戏窗口自己处理
   });
 
   addListener('switch-tab', (event, index) => {
-    const senderWin = BrowserWindow.fromWebContents(event.sender);
-    if (senderWin === win) {
-      switchTab(index);
-    }
+    // 游戏窗口自己处理
   });
 
   addListener('close-tab', (event, index) => {
-    const senderWin = BrowserWindow.fromWebContents(event.sender);
-    if (senderWin === win) {
-      closeTab(index);
-    }
+    // 游戏窗口自己处理
   });
 
   addListener('min-window', (event) => {
@@ -1950,12 +1333,12 @@ function createGameWindow(url, gameName, account) {
     currentSpeedRate = speed;
     config.lastSpeed = speed;
     saveConfig();
-    
+
     if (fs.existsSync(speedctlPath)) {
       updateNativeRate(speed);
       injectAllChildProcesses();
     }
-    
+
     log(`全局变速率已设置为: ${speed}x`);
   });
 
@@ -1963,205 +1346,115 @@ function createGameWindow(url, gameName, account) {
     const senderWin = BrowserWindow.fromWebContents(event.sender);
     if (senderWin === win) {
       isAudioMuted = muted;
-      localTabs.forEach(({ webContents }) => {
-        if (webContents && !webContents.isDestroyed()) {
-          webContents.setAudioMuted(muted);
-        }
-      });
     }
   });
 
-  let isSidebarVisible = false;
-
   addListener('toggle-sidebar', (event, visible) => {
-    const senderWin = BrowserWindow.fromWebContents(event.sender);
-    if (senderWin === win) {
-      isSidebarVisible = visible;
-      const sidebarWidth = 280;
-      const bounds = win.getContentBounds();
-      const toolbarHeight = 36;
-      
-      localTabs.forEach((tab, idx) => {
-        if (tab.view) {
-          if (idx === localCurrentTabIndex) {
-            if (visible) {
-              tab.view.setBounds({ x: 0, y: toolbarHeight, width: bounds.width - sidebarWidth, height: bounds.height - toolbarHeight });
-            } else {
-              tab.view.setBounds({ x: 0, y: toolbarHeight, width: bounds.width, height: bounds.height - toolbarHeight });
-            }
-          }
-        }
-      });
-    }
+    // 侧边栏由 game.html 自己处理
   });
 
   addListener('show-modal', (event, show) => {
+    // 模态框由 game.html 自己处理
+  });
+
+  addListener('refresh-page', (event) => {
+    // 由 game.html 处理
+  });
+
+  addListener('clear-cache', (event) => {
+    // 由 game.html 处理
+  });
+
+  // 账号相关 IPC
+  addListener('get-accounts-window', (event) => {
     const senderWin = BrowserWindow.fromWebContents(event.sender);
     if (senderWin === win) {
-      const toolbarHeight = 36;
-      const bounds = win.getContentBounds();
-      
-      localTabs.forEach((tab, idx) => {
-        if (tab.view) {
-          if (idx === localCurrentTabIndex) {
-            if (show) {
-              tab.view.setBounds({ x: 0, y: bounds.height, width: bounds.width, height: 0 });
-            } else {
-              const sidebarWidth = isSidebarVisible ? 280 : 0;
-              tab.view.setBounds({ x: 0, y: toolbarHeight, width: bounds.width - sidebarWidth, height: bounds.height - toolbarHeight });
-            }
-          }
-        }
+      senderWin.webContents.send('accounts-update', accounts);
+    }
+  });
+
+  addListener('save-accounts-window', (event, accountList) => {
+    accounts = accountList || [];
+    saveAccounts();
+  });
+
+  addListener('launch-account-window', (event, accountId) => {
+    // 在当前窗口添加新标签并自动登录
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    if (senderWin === win) {
+      const account = accounts.find(a => a.id === accountId);
+      if (account) {
+        senderWin.webContents.send('launch-account', account);
+      }
+    }
+  });
+
+  addListener('launch-all-accounts-window', (event) => {
+    // 在当前窗口启动所有账号
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    if (senderWin === win) {
+      const validAccounts = accounts.filter(a => a.qq);
+      validAccounts.forEach(account => {
+        senderWin.webContents.send('launch-account', account);
       });
     }
   });
 
-  let resizeTimeout = null;
-  const updateBrowserViewAutoResize = () => {
-    if (resizeTimeout) clearTimeout(resizeTimeout);
-    
-    resizeTimeout = setTimeout(() => {
-      const sidebarWidth = isSidebarVisible ? 280 : 0;
-      
-      const activeTab = localTabs[localCurrentTabIndex];
-      if (activeTab && activeTab.view) {
-        activeTab.view.setAutoResize({
-          width: true,
-          height: true,
-          horizontal: sidebarWidth === 0,
-          vertical: true
-        });
-        
-        const contentBounds = win.getContentBounds();
-        const targetWidth = contentBounds.width - sidebarWidth;
-        const targetHeight = contentBounds.height - toolbarHeight;
-        activeTab.view.setBounds({ x: 0, y: toolbarHeight, width: targetWidth, height: targetHeight });
-      }
-    }, 30);
-  };
+  addListener('fill-account', (event, accountId) => {
+    // 由 game.html 处理
+  });
+
+  addListener('get-config', (event, key) => {
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    if (senderWin === win) {
+      senderWin.webContents.send('config-result', config[key]);
+    }
+  });
+
+  addListener('set-config', (event, key, value) => {
+    config[key] = value;
+    saveConfig();
+  });
 
   win.on('resize', () => {
-    updateBrowserViewAutoResize();
-  });
-
-  win.on('maximize', () => {
-    updateBrowserViewAutoResize();
-  });
-
-  win.on('unmaximize', () => {
-    setTimeout(() => {
-      updateBrowserViewAutoResize();
-    }, 50);
+    // 窗口大小变化由 webview 自己处理
   });
 
   win.on('blur', () => {
-    const activeTab = localTabs[localCurrentTabIndex];
-    if (activeTab && activeTab.webContents) {
-      if (typeof activeTab.webContents.isDestroyed === 'function' && !activeTab.webContents.isDestroyed()) {
-        activeTab.webContents.setBackgroundThrottling(false);
-        activeTab.webContents.setAudioMuted(true);
-      } else {
-        activeTab.webContents.setBackgroundThrottling(false);
-        activeTab.webContents.setAudioMuted(true);
-      }
-    }
+    // 由 game.html 处理
   });
 
   win.on('focus', () => {
-    const activeTab = localTabs[localCurrentTabIndex];
-    if (activeTab && activeTab.webContents) {
-      if (typeof activeTab.webContents.isDestroyed === 'function' && !activeTab.webContents.isDestroyed()) {
-        activeTab.webContents.setBackgroundThrottling(false);
-        activeTab.webContents.setAudioMuted(isAudioMuted);
-      } else {
-        activeTab.webContents.setBackgroundThrottling(false);
-        activeTab.webContents.setAudioMuted(isAudioMuted);
-      }
-    }
-  });
-
-  win.on('show', () => {
-    const activeTab = localTabs[localCurrentTabIndex];
-    if (activeTab && activeTab.webContents) {
-      if (typeof activeTab.webContents.isDestroyed === 'function' && !activeTab.webContents.isDestroyed()) {
-        activeTab.webContents.setBackgroundThrottling(false);
-        activeTab.webContents.setAudioMuted(isAudioMuted);
-      } else {
-        activeTab.webContents.setBackgroundThrottling(false);
-        activeTab.webContents.setAudioMuted(isAudioMuted);
-      }
-    }
-  });
-
-  win.on('restore', () => {
-    const activeTab = localTabs[localCurrentTabIndex];
-    if (activeTab && activeTab.webContents) {
-      if (typeof activeTab.webContents.isDestroyed === 'function' && !activeTab.webContents.isDestroyed()) {
-        activeTab.webContents.setBackgroundThrottling(false);
-        activeTab.webContents.setAudioMuted(isAudioMuted);
-      } else {
-        activeTab.webContents.setBackgroundThrottling(false);
-        activeTab.webContents.setAudioMuted(isAudioMuted);
-      }
-    }
-    win.setSize(win.getSize()[0], win.getSize()[1] + 1);
-    setTimeout(() => {
-      if (typeof win.isDestroyed === 'function' && !win.isDestroyed()) {
-        win.setSize(win.getSize()[0], win.getSize()[1] - 1);
-      } else if (!win.isDestroyed) {
-        win.setSize(win.getSize()[0], win.getSize()[1] - 1);
-      }
-    }, 50);
+    // 由 game.html 处理
   });
 
   win.on('closed', () => {
     ipcListeners.forEach(({ channel, handler }) => {
       ipcMain.removeListener(channel, handler);
     });
-    
-    // 窗口关闭前停止所有标签的音频并销毁BrowserView
-    localTabs.forEach((tab, idx) => {
-      if (tab.webContents) {
-        try {
-          tab.webContents.setAudioMuted(true);
-          tab.webContents.removeAllListeners();
-          if (typeof tab.webContents.destroy === 'function') {
-            tab.webContents.destroy();
-          }
-        } catch (e) {}
-      }
-      if (tab.view) {
-        try {
-          win.removeBrowserView(tab.view);
-          tab.view.destroy();
-        } catch (e) {}
-      }
-      delete localTabs[idx];
-    });
-    localTabs = null;
-    
-    log('游戏窗口 已关闭');
-    
+
+    log('游戏窗口已关闭');
+
     const index = gameWindows.findIndex(w => w.win === win);
     if (index !== -1) {
       gameWindows[index] = null;
       gameWindows.splice(index, 1);
     }
-    
+
     if (gameWindows.length === 0) {
       currentSpeedRate = 1;
       config.lastSpeed = 1;
       saveConfig();
-      
+
       if (fs.existsSync(speedctlPath)) {
         updateNativeRate(1);
       }
-      
+
       if (accountWindow && !accountWindow.isDestroyed()) {
         accountWindow.close();
         log('账号管理窗口已关闭');
       }
-      
+
       if (launcherWindow && !launcherWindow.isDestroyed()) {
         launcherWindow.show();
         launcherWindow.focus();
@@ -2175,9 +1468,8 @@ function createGameWindow(url, gameName, account) {
     }
   });
 
-  gameWindows.push({ win, localTabs, localCurrentTabIndex, updateToolbarTabList });
-  
-  log('游戏窗口创建成功');
+  gameWindows.push({ win });
+  log('游戏窗口创建成功: ' + gameName);
   return win;
 }
 
@@ -2394,11 +1686,30 @@ function initAutoUpdater() {
       return;
     }
     
+    // 处理更新说明，将 HTML 标签转换为纯文本
+    let releaseNotes = info.releaseNotes || '无';
+    if (typeof releaseNotes === 'string') {
+      // 替换常见 HTML 标签
+      releaseNotes = releaseNotes
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<p>/gi, '\n')
+        .replace(/<\/p>/gi, '')
+        .replace(/<li>/gi, '• ')
+        .replace(/<\/li>/gi, '\n')
+        .replace(/<ul>/gi, '\n')
+        .replace(/<\/ul>/gi, '')
+        .replace(/<ol>/gi, '\n')
+        .replace(/<\/ol>/gi, '')
+        .replace(/<[^>]+>/g, '') // 移除其他 HTML 标签
+        .replace(/\n\s*\n/g, '\n') // 合并多余换行
+        .trim();
+    }
+    
     isShowingUpdateDialog = true;
     dialog.showMessageBox({
       type: 'info',
       title: '发现更新',
-      message: `发现新版本 ${info.version}\n\n当前版本: ${CURRENT_VERSION}\n\n更新说明: ${info.releaseNotes || '无'}`,
+      message: `发现新版本 ${info.version}\n\n当前版本: ${CURRENT_VERSION}\n\n更新说明:\n${releaseNotes}`,
       buttons: ['立即更新', '稍后提醒']
     }).then((result) => {
       isShowingUpdateDialog = false;
@@ -2978,6 +2289,9 @@ app.whenReady().then(() => {
   detectWindowsVersion();
   initSpeedControl();
   initAutoUpdater();
+
+  // 启动时执行自动清理
+  performStartupCleanup();
   
   ipcMain.on('set-theme', (event, theme) => {
     currentTheme = theme;
@@ -3019,4 +2333,5 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   saveConfig();
+  performExitCleanup();
 });
