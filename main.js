@@ -908,9 +908,7 @@ app.commandLine.appendSwitch('allow-running-insecure-content');
 app.commandLine.appendSwitch('ignore-certificate-errors');
 app.commandLine.appendSwitch('ignore-gpu-blacklist');
 app.commandLine.appendSwitch('no-sandbox');
-app.commandLine.appendSwitch('disable-renderer-backgrounding');
-app.commandLine.appendSwitch('disable-background-timer-throttling');
-app.commandLine.appendSwitch('disable-backgrounding');
+
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('disable-frame-rate-limit');
 app.commandLine.appendSwitch('disable-gpu-vsync');
@@ -1245,19 +1243,16 @@ function createGameWindow(url, gameName, account) {
       enableRemoteModule: true,
       zoomFactor: 1.0,
       defaultFontSize: 16,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
       offscreen: false,
-      webviewTag: true,
-      partition: 'persist:game'
+      webviewTag: true
     },
     show: true,
     fullscreenable: true,
-    simpleFullscreen: false,
-    skipTaskbar: false
+    simpleFullscreen: false
   });
 
   win.webContents.setZoomFactor(1.0);
-  win.webContents.setBackgroundThrottling(false);
 
   win.setMenu(null);
 
@@ -1421,11 +1416,22 @@ function createGameWindow(url, gameName, account) {
   });
 
   win.on('blur', () => {
-    // 由 game.html 处理
+    if (gameWindows.length > 2) {
+      win.minimize();
+    }
+    win.webContents.send('window-blur');
   });
 
   win.on('focus', () => {
-    // 由 game.html 处理
+    win.webContents.send('window-focus');
+  });
+
+  win.on('minimize', () => {
+    win.webContents.send('window-minimized');
+  });
+
+  win.on('restore', () => {
+    win.webContents.send('window-restored');
   });
 
   win.on('closed', () => {
@@ -2212,14 +2218,11 @@ function addTabToGameWindow(gameWindow, name, account) {
       session: session,
       enableRemoteModule: false,
       sandbox: false,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
       offscreen: false,
       enablePreferredSizeMode: false
     }
   });
-  
-  // 禁用后台节流，确保游戏流畅运行
-  view.webContents.setBackgroundThrottling(false);
 
   win.addBrowserView(view);
   const contentBounds = win.getContentBounds();

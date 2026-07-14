@@ -194,7 +194,11 @@
       height: 100%;
     }
     .webview-wrap webview.hidden {
-      visibility: hidden;
+      display: none;
+      pointer-events: none;
+    }
+    .webview-wrap webview.paused {
+      display: none;
       pointer-events: none;
     }
     .account-sidebar {
@@ -469,6 +473,7 @@
     let isMuted = false;
     let tabCounter = 0;
     let currentSpeed = 1;
+    let isWindowActive = true;
 
     // IPC 通信
     const ipcRenderer = require('electron').ipcRenderer;
@@ -603,7 +608,9 @@
     }
 
     function getPartition(tabId) {
-      return 'share:game';
+      // 使用普通分区，让缓存正常工作
+      // 注：persist 分区会导致 Flash 插件加载问题，暂时不用
+      return 'tab-' + tabId;
     }
 
     // 快速登录注入
@@ -691,8 +698,10 @@
       const webview = document.createElement('webview');
       webview.src = currentGame ? currentGame.url : 'https://huoying.qq.com/';
       webview.setAttribute('plugins', '');
+      // 不设置 allowpopups，阻止 window.open 弹窗
       webview.setAttribute('partition', getPartition(tab.id));
-      webview.setAttribute('webpreferences', 'allowRunningInsecureContent=yes,webSecurity=no,nativeWindowOpen=no,contextIsolation=no,enableRemoteModule=yes,offscreen=false,backgroundThrottling=false');
+      // nativeWindowOpen=no 阻止原生窗口打开
+      webview.setAttribute('webpreferences', 'allowRunningInsecureContent=yes,webSecurity=no,nativeWindowOpen=no');
       webview.dataset.tabId = tab.id;
 
       if (tab.id !== activeTabId) {
@@ -830,6 +839,7 @@
 
       activeTabId = tabId;
 
+      // 使用 CSS 控制显示/隐藏，而非销毁
       if (prevTab && prevTab._webview) {
         prevTab._webview.classList.add('hidden');
       }
@@ -1128,13 +1138,54 @@
       document.title = data.game.name;
       document.getElementById('windowTitle').textContent = data.game.name;
 
-      // 创建第一个标签，如果有账号则传入以使用正确的 session
       const initialAccount = data.account ? { qq: data.account.qq, qqPwd: data.account.qqPwd || '' } : null;
       addTab('窗口1', initialAccount);
     });
 
     ipcRenderer.on('launch-account', (event, account) => {
       const newTab = addTab(account.windowName || account.qq, { qq: account.qq, qqPwd: account.qqPwd || '' });
+    });
+
+    ipcRenderer.on('window-blur', () => {
+      isWindowActive = false;
+      tabs.forEach(tab => {
+        if (tab._webview && tab.id !== activeTabId) {
+          tab._webview.classList.add('paused');
+        }
+      });
+    });
+
+    ipcRenderer.on('window-focus', () => {
+      isWindowActive = true;
+      tabs.forEach(tab => {
+        if (tab._webview && tab.id !== activeTabId) {
+          tab._webview.classList.remove('paused');
+        }
+      });
+    });
+
+    ipcRenderer.on('window-minimized', () => {
+      isWindowActive = false;
+      tabs.forEach(tab => {
+        if (tab._webview) {
+          tab._webview.classList.add('paused');
+          try { tab._webview.setAudioMuted(true); } catch (e) {}
+        }
+      });
+    });
+
+    ipcRenderer.on('window-restored', () => {
+      isWindowActive = true;
+      tabs.forEach(tab => {
+        if (tab._webview) {
+          if (tab.id === activeTabId) {
+            tab._webview.classList.remove('paused');
+            if (!isMuted) {
+              try { tab._webview.setAudioMuted(false); } catch (e) {}
+            }
+          }
+        }
+      });
     });
 
     // 主题应用
