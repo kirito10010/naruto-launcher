@@ -194,11 +194,13 @@
       height: 100%;
     }
     .webview-wrap webview.hidden {
-      display: none;
+      width: 0;
+      height: 0;
       pointer-events: none;
     }
     .webview-wrap webview.paused {
-      display: none;
+      width: 0;
+      height: 0;
       pointer-events: none;
     }
     .account-sidebar {
@@ -438,6 +440,8 @@
       </div>
       <div class="separator"></div>
       <button class="btn" id="btn-mute" title="切换静音">🔊</button>
+      <div class="separator"></div>
+      <button class="btn" id="btn-stretch" title="切换显示模式：原生分辨率 / 跟随窗口拉伸">拉伸</button>
     </div>
     <div class="toolbar-right">
       <div class="window-controls">
@@ -465,6 +469,7 @@
     const tabBar = document.getElementById('tabs-container');
     const speedSelect = document.getElementById('speed-select');
     const btnMute = document.getElementById('btn-mute');
+    const btnStretch = document.getElementById('btn-stretch');
 
     let tabs = [];
     let activeTabId = null;
@@ -474,6 +479,7 @@
     let tabCounter = 0;
     let currentSpeed = 1;
     let isWindowActive = true;
+    let stretchMode = false;
 
     // IPC 通信
     const ipcRenderer = require('electron').ipcRenderer;
@@ -613,6 +619,76 @@
       return 'tab-' + tabId;
     }
 
+    // ===== 拉伸模式（原生分辨率 / 跟随窗口拉伸）=====
+    const STRETCH_ENABLE_JS = [
+      '(function() {',
+      '  function doStretch() {',
+      '    var els = document.querySelectorAll("embed, object");',
+      '    var el = null, maxArea = 0, w = 0, h = 0;',
+      '    for (var i = 0; i < els.length; i++) {',
+      '      var ow = els[i].offsetWidth, oh = els[i].offsetHeight;',
+      '      var area = ow * oh;',
+      '      if (area > maxArea) { maxArea = area; el = els[i]; w = ow; h = oh; }',
+      '    }',
+      '    if (!el || !w || !h) return;',
+      '    var sx = window.innerWidth / w;',
+      '    var sy = window.innerHeight / h;',
+      '    if (sx <= 0 || sy <= 0) return;',
+      '    el.style.position = "fixed";',
+      '    el.style.left = "0px";',
+      '    el.style.top = "0px";',
+      '    el.style.zIndex = "2147483647";',
+      '    el.style.transformOrigin = "0 0";',
+      '    el.style.transform = "scale(" + sx + "," + sy + ")";',
+      '  }',
+      '  if (!window.__narutoDoStretch) {',
+      '    window.__narutoDoStretch = doStretch;',
+      '    window.addEventListener("resize", doStretch);',
+      '    window.__narutoStretchTimer = setInterval(doStretch, 1000);',
+      '  }',
+      '  doStretch();',
+      '})();'
+    ].join('\n');
+
+    const STRETCH_DISABLE_JS = [
+      '(function() {',
+      '  var els = document.querySelectorAll("embed, object");',
+      '  for (var i = 0; i < els.length; i++) {',
+      '    var el = els[i];',
+      '    el.style.position = "";',
+      '    el.style.left = "";',
+      '    el.style.top = "";',
+      '    el.style.zIndex = "";',
+      '    el.style.transformOrigin = "";',
+      '    el.style.transform = "";',
+      '  }',
+      '  if (window.__narutoStretchTimer) { clearInterval(window.__narutoStretchTimer); window.__narutoStretchTimer = null; }',
+      '  if (window.__narutoDoStretch) {',
+      '    window.removeEventListener("resize", window.__narutoDoStretch);',
+      '    window.__narutoDoStretch = null;',
+      '  }',
+      '})();'
+    ].join('\n');
+
+    function applyStretchToWebview(webview, enable) {
+      if (!webview) return;
+      const js = enable ? STRETCH_ENABLE_JS : STRETCH_DISABLE_JS;
+      try {
+        webview.executeJavaScript(js).catch(function() {});
+      } catch (e) {}
+    }
+
+    function setStretchMode(enabled) {
+      stretchMode = enabled;
+      if (btnStretch) btnStretch.classList.toggle('active', enabled);
+      tabs.forEach(function(tab) {
+        if (tab._webview) {
+          applyStretchToWebview(tab._webview, enabled);
+        }
+      });
+      try { window.gameAPI.setConfig('stretchMode', enabled); } catch (e) {}
+    }
+
     // 快速登录注入
     function injectQuickLogin(webview, qqNumber, password) {
       const js = [
@@ -733,6 +809,9 @@
 
       webview.addEventListener('did-stop-loading', () => {
         tryPendingInject(tab);
+        if (stretchMode) {
+          applyStretchToWebview(webview, true);
+        }
       });
 
       webview.addEventListener('did-start-loading', () => {
@@ -842,12 +921,11 @@
       // 使用 CSS 控制显示/隐藏，而非销毁
       if (prevTab && prevTab._webview) {
         prevTab._webview.classList.add('hidden');
+        try { prevTab._webview.setAudioMuted(true); } catch (e) {}
       }
       if (nextTab && nextTab._webview) {
         nextTab._webview.classList.remove('hidden');
-        if (isMuted) {
-          try { nextTab._webview.setAudioMuted(true); } catch (e) {}
-        }
+        try { nextTab._webview.setAudioMuted(isMuted); } catch (e) {}
       }
 
       renderTabs();
@@ -1039,6 +1117,10 @@
       });
 
       window.gameAPI.setConfig('muted', isMuted);
+    });
+
+    btnStretch.addEventListener('click', () => {
+      setStretchMode(!stretchMode);
     });
 
     document.getElementById('btn-min').addEventListener('click', () => {
@@ -1249,6 +1331,15 @@
       root.style.setProperty('--separator', t.separator);
       root.style.setProperty('--accent', t.accent);
     }
+
+    // 恢复拉伸模式状态
+    try {
+      window.gameAPI.getConfig('stretchMode').then(function(enabled) {
+        if (enabled) {
+          setStretchMode(true);
+        }
+      }).catch(function() {});
+    } catch (e) {}
 
     // 页面加载完成后请求游戏信息
     document.addEventListener('DOMContentLoaded', () => {

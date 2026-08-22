@@ -790,50 +790,22 @@ function setSpeedRate(rate) {
   log(`变速率已设置为: ${rate}x`);
 }
 
-function getAllChildProcessesRecursive(parentPid) {
-  return new Promise((resolve, reject) => {
-    const psCommand = 'Get-CimInstance -ClassName Win32_Process -Filter "ParentProcessId=' + parentPid + '" | Select-Object ProcessId,CommandLine | ForEach-Object { Write-Output "ProcessId=$($_.ProcessId)`nCommandLine=$($_.CommandLine)" }';
-    
-    exec('powershell.exe -Command "' + psCommand + '"', { encoding: 'utf-8', timeout: 5000 }, function (err, stdout) {
-      if (err) {
-        log('扫描子进程失败: ' + err.message, 'WARN');
-        resolve([]);
-        return;
-      }
-      
-      const pids = [];
-      const lines = stdout.split('\n');
-      let cmdLine = '';
-      let pid = '';
-      
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('CommandLine=')) {
-          cmdLine = trimmed.substring('CommandLine='.length);
-        } else if (trimmed.startsWith('ProcessId=')) {
-          pid = trimmed.substring('ProcessId='.length);
-        }
-        if (pid && cmdLine) {
-          const numPid = parseInt(pid.trim(), 10);
-          if (numPid && !injectedPids.has(numPid) && numPid !== parentPid) {
-            const isRelevant = cmdLine.includes('--type=') ||
-              cmdLine.includes('gpu-process') ||
-              cmdLine.includes('plugin') ||
-              cmdLine.includes('ppapi') ||
-              cmdLine.includes('renderer');
-            if (isRelevant) {
-              pids.push(numPid);
-            }
-          }
-          cmdLine = '';
-          pid = '';
-        }
-      }
-      
-      log('通过PowerShell找到 ' + pids.length + ' 个子进程');
-      resolve(pids);
-    });
-  });
+function getAllRelevantChildPids() {
+  try {
+    // Electron 自带的进程指标，无需 spawn PowerShell 扫描
+    const metrics = app.getAppMetrics();
+    const relevantTypes = new Set([
+      'renderer', 'tab', 'gpu', 'plugin', 'utility',
+      'ppapi plugin', 'pepper plugin', 'pepper plugin broker'
+    ]);
+    return metrics
+      .filter(m => m.pid && m.pid !== process.pid)
+      .filter(m => relevantTypes.has(String(m.type || '').toLowerCase()))
+      .map(m => m.pid);
+  } catch (e) {
+    log('获取进程列表失败: ' + e.message, 'WARN');
+    return [];
+  }
 }
 
 let lastInjectTime = 0;
@@ -847,8 +819,7 @@ async function injectAllChildProcesses() {
   lastInjectTime = now;
   
   try {
-    const mainPid = process.pid;
-    const childPids = await getAllChildProcessesRecursive(mainPid);
+    const childPids = getAllRelevantChildPids();
     
     for (const pid of childPids) {
       if (!injectedPids.has(pid)) {
@@ -866,8 +837,7 @@ async function injectAllChildProcesses() {
 
 async function secondPass() {
   try {
-    const mainPid = process.pid;
-    const childPids = await getAllChildProcessesRecursive(mainPid);
+    const childPids = getAllRelevantChildPids();
     
     for (const pid of childPids) {
       if (!injectedPids.has(pid)) {
@@ -1247,7 +1217,7 @@ function createGameWindow(url, gameName, account) {
       offscreen: false,
       webviewTag: true
     },
-    show: true,
+    show: false,
     fullscreenable: true,
     simpleFullscreen: false
   });
@@ -1255,6 +1225,20 @@ function createGameWindow(url, gameName, account) {
   win.webContents.setZoomFactor(1.0);
 
   win.setMenu(null);
+
+  // 首帧渲染完成后显示窗口，避免冷启动白屏
+  win.once('ready-to-show', () => {
+    if (win && !win.isDestroyed()) {
+      win.show();
+    }
+  });
+
+  // 超时兜底：5 秒未触发 ready-to-show 则强制显示
+  setTimeout(() => {
+    if (win && !win.isDestroyed() && !win.isVisible()) {
+      win.show();
+    }
+  }, 5000);
 
   // 加载 game.html
   win.loadFile('game.html');
@@ -1416,9 +1400,6 @@ function createGameWindow(url, gameName, account) {
   });
 
   win.on('blur', () => {
-    if (gameWindows.length > 2) {
-      win.minimize();
-    }
     win.webContents.send('window-blur');
   });
 
@@ -2293,8 +2274,12 @@ app.whenReady().then(() => {
   initSpeedControl();
   initAutoUpdater();
 
-  // 启动时执行自动清理
-  performStartupCleanup();
+  // 启动时延迟执行自动清理，避免同步 IO 阻塞主进程
+  setTimeout(() => {
+    if (gameWindows.length === 0) {
+      performStartupCleanup();
+    }
+  }, 3000);
   
   ipcMain.on('set-theme', (event, theme) => {
     currentTheme = theme;
