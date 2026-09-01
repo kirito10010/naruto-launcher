@@ -33,7 +33,9 @@ let isAudioMuted = false;
 
 let config = {
   theme: 'light',
-  lastSpeed: 1
+  lastSpeed: 1,
+  diskCache: true,
+  flashChoice: 'bundled'
 };
 
 const ACCOUNTS_FILE = path.join(app.getPath('userData'), 'accounts.json');
@@ -219,6 +221,8 @@ function loadConfig() {
       config = JSON.parse(data);
       currentTheme = config.theme || 'light';
       currentSpeedRate = config.lastSpeed || 1;
+      if (config.diskCache === undefined) config.diskCache = true;
+      if (config.flashChoice === undefined) config.flashChoice = 'bundled';
       log('配置已加载: theme=' + currentTheme + ', lastSpeed=' + currentSpeedRate);
     } else {
       log('配置文件不存在，使用默认配置');
@@ -313,14 +317,33 @@ function getResourcePath(...segments) {
 function getFlashPath() {
   const arch = process.arch === 'x64' ? '64' : '32';
   const sysDir = process.arch === 'x64' ? 'System32' : 'SysWOW64';
-  const paths = [
-    // 优先使用 32.0.0.344 版本（与竞品一致，更稳定）
+
+  // 读取 Flash 选择（内置国际版 / 系统国内版），此函数在 config 加载前执行，故直接读文件
+  let flashChoice = 'bundled';
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+      flashChoice = cfg.flashChoice || 'bundled';
+    }
+  } catch (e) {}
+
+  const bundled = [
+    // 内置 32.0.0.344（与竞品一致，更稳定）
     getResourcePath('flash', `pepflashplayer${arch}_32_0_0_344.dll`),
     getResourcePath('flash', `pepflashplayer${arch}_34_0_0_380.dll`),
     getResourcePath('flash', 'pepflashplayer.dll'),
     `C:\\Windows\\${sysDir}\\Macromed\\Flash\\pepflashplayer${arch}_32_0_0_344.dll`,
     path.join(__dirname, 'flash', 'pepflashplayer.dll')
   ];
+
+  // 系统国内重橙版 34.0.0.380
+  const system = [
+    `C:\\Windows\\${sysDir}\\Macromed\\Flash\\pepflashplayer${arch}_34_0_0_380.dll`,
+    `C:\\Windows\\System32\\Macromed\\Flash\\pepflashplayer64_34_0_0_380.dll`,
+    `C:\\Windows\\SysWOW64\\Macromed\\Flash\\pepflashplayer32_34_0_0_380.dll`
+  ];
+
+  const paths = (flashChoice === 'system') ? system.concat(bundled) : bundled.concat(system);
 
   for (const p of paths) {
     if (fs.existsSync(p)) {
@@ -795,8 +818,7 @@ function getAllRelevantChildPids() {
     // Electron 自带的进程指标，无需 spawn PowerShell 扫描
     const metrics = app.getAppMetrics();
     const relevantTypes = new Set([
-      'renderer', 'tab', 'gpu', 'plugin', 'utility',
-      'ppapi plugin', 'pepper plugin', 'pepper plugin broker'
+      'renderer', 'tab', 'plugin', 'ppapi plugin', 'pepper plugin'
     ]);
     return metrics
       .filter(m => m.pid && m.pid !== process.pid)
@@ -879,12 +901,21 @@ app.commandLine.appendSwitch('ignore-certificate-errors');
 app.commandLine.appendSwitch('ignore-gpu-blacklist');
 app.commandLine.appendSwitch('no-sandbox');
 
+// 性能最大化：解除帧率锁 + 禁止后台节流
+app.commandLine.appendSwitch('disable-frame-rate-limit');
+app.commandLine.appendSwitch('disable-gpu-vsync');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-backgrounding');
+
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('enable-fast-startup');
 app.commandLine.appendSwitch('high-dpi-support', '1');
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
-app.commandLine.appendSwitch('enable-features', 'CanvasOopRasterization');
 app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity');
+
+// 磁盘缓存上限 1GB（1073741824 字节）
+app.commandLine.appendSwitch('disk-cache-size', '1073741824');
 
 function createLauncherWindow() {
   const colors = getThemeColors();
@@ -1021,8 +1052,15 @@ function createLauncherWindow() {
     .footer {
       margin-top: auto;
       display: flex;
-      justify-content: center;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
       padding-bottom: 10px;
+    }
+    .footer-buttons {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
     .join-group-btn {
       padding: 8px 20px;
@@ -1041,6 +1079,27 @@ function createLauncherWindow() {
     }
     .join-group-btn:active {
       transform: translateY(0);
+    }
+    .flash-selector {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      -webkit-app-region: no-drag;
+    }
+    .flash-selector label {
+      font-size: 12px;
+      color: #888;
+    }
+    .flash-selector select {
+      padding: 5px 8px;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      background: var(--game-bg);
+      color: var(--text-color);
+      font-size: 12px;
+      outline: none;
+      cursor: pointer;
     }
   </style>
 </head>
@@ -1063,7 +1122,17 @@ function createLauncherWindow() {
   </div>
   
   <div class="footer">
-    <button class="join-group-btn" onclick="joinQQGroup()">💬 加入QQ群 489455643</button>
+    <div class="footer-buttons">
+      <button class="join-group-btn" onclick="joinQQGroup()">💬 加入QQ群</button>
+      <button class="join-group-btn" onclick="openSite()">🌐 网站</button>
+    </div>
+    <div class="flash-selector">
+      <label>Flash 版本</label>
+      <select id="flashSelect" onchange="changeFlash(this.value)">
+        <option value="bundled">内置国际版 32.0.0.344</option>
+        <option value="system">系统国内版 34.0.0.380</option>
+      </select>
+    </div>
   </div>
   
   <script>
@@ -1075,6 +1144,14 @@ function createLauncherWindow() {
     
     function joinQQGroup() {
       shell.openExternal('https://qm.qq.com/q/kHOKaFZRqo');
+    }
+    
+    function openSite() {
+      shell.openExternal('http://49.235.142.253/');
+    }
+    
+    function changeFlash(choice) {
+      ipcRenderer.send('set-flash-choice', choice);
     }
     
     function setTheme(theme) {
@@ -1147,6 +1224,11 @@ function createLauncherWindow() {
     ipcRenderer.on('theme-changed', (event, theme) => {
       applyTheme(theme);
     });
+    
+    ipcRenderer.on('flash-choice', (event, choice) => {
+      const sel = document.getElementById('flashSelect');
+      if (sel) sel.value = choice || 'bundled';
+    });
   </script>
 </body>
 </html>`;
@@ -1155,6 +1237,7 @@ function createLauncherWindow() {
 
   launcherWindow.webContents.on('did-finish-load', () => {
     launcherWindow.webContents.send('theme-changed', currentTheme);
+    launcherWindow.webContents.send('flash-choice', config.flashChoice);
   });
 
   launcherWindow.on('close', (event) => {
@@ -1212,7 +1295,7 @@ function createGameWindow(url, gameName, account) {
       enableRemoteModule: true,
       zoomFactor: 1.0,
       defaultFontSize: 16,
-      backgroundThrottling: true,
+      backgroundThrottling: false,
       offscreen: false,
       webviewTag: true
     },
@@ -1251,7 +1334,8 @@ function createGameWindow(url, gameName, account) {
     win.webContents.send('game-info', {
       game: gameInfo,
       accounts: accounts,
-      account: account
+      account: account,
+      diskCache: config.diskCache !== false
     });
 
     // 发送当前配置
@@ -1648,20 +1732,6 @@ ipcMain.on('log-message', (event, message, level) => {
 });
 
 // 内存监控：game.html 定时上报各标签 webContentsId，超阈值回传提示重载
-function getMemoryMB(pid) {
-  try {
-    const m = app.getAppMetrics().find(x => x.pid === pid);
-    return (m && m.memory) ? Math.round(m.memory.workingSetSize / 1024) : 0;
-  } catch (e) { return 0; }
-}
-
-// 标签内存超过该值（MB）时清缓存释放，不重载，避免中断游戏
-const ACTIVE_MEM_CLEAR_THRESHOLD = 2500;
-// 清缓存冷却时间（毫秒），避免反复清理导致地图瓦片频繁重下载
-const CACHE_CLEAR_COOLDOWN = 3 * 60 * 1000;
-// 记录每个标签上次清缓存时间：webContentsId -> timestamp
-const lastCacheClear = {};
-
 // 强杀残留的 Flash (PPAPI) 插件进程，避免长时间全屏后僵尸进程占用 GPU 表面导致白屏
 function killFlashPluginProcesses() {
   try {
@@ -1683,39 +1753,6 @@ function killFlashPluginProcesses() {
     log('清理 Flash 插件进程失败: ' + e.message, 'WARN');
   }
 }
-
-ipcMain.on('memory-check', (event, tabList) => {
-  const highMem = [];
-  const statusList = [];
-  for (const t of (tabList || [])) {
-    try {
-      if (!t || !t.webContentsId) continue;
-      const wc = webContents.fromId(t.webContentsId);
-      if (!wc || wc.isDestroyed()) continue;
-      const mem = getMemoryMB(wc.getOSProcessId());
-      statusList.push({ id: t.id, mem });
-      if (mem > 1500) highMem.push({ id: t.id, mem });
-
-      // 内存超过 2500MB：只清缓存不重载，避免中断游戏
-      if (mem > ACTIVE_MEM_CLEAR_THRESHOLD) {
-        const now = Date.now();
-        const last = lastCacheClear[t.webContentsId] || 0;
-        if (now - last > CACHE_CLEAR_COOLDOWN) {
-          lastCacheClear[t.webContentsId] = now;
-          wc.session.clearCache().then(function() {
-            log('标签 ' + t.id + ' 内存 ' + mem + 'MB 超限，已清理缓存（不重载）');
-          }).catch(function(err) {
-            log('清理标签缓存失败: ' + err.message, 'WARN');
-          });
-        }
-      }
-    } catch (e) {}
-  }
-  try { event.sender.send('memory-status', statusList); } catch (e) {}
-  if (highMem.length) {
-    try { event.sender.send('memory-alert', highMem); } catch (e) {}
-  }
-});
 
 function initAutoUpdater() {
   if (!app.isPackaged) {
@@ -2373,6 +2410,35 @@ app.whenReady().then(() => {
         gw.win.webContents.send('theme-update', theme);
       }
     });
+  });
+  
+  // Flash 版本选择：内置国际版 / 系统国内版
+  ipcMain.on('set-flash-choice', async (event, choice) => {
+    config.flashChoice = (choice === 'system') ? 'system' : 'bundled';
+    saveConfig();
+    log('Flash 版本已切换为: ' + config.flashChoice);
+    const label = (config.flashChoice === 'system') ? '系统国内版 34.0.0.380' : '内置国际版 32.0.0.344';
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Flash 版本切换',
+      message: '已切换到「' + label + '」，需要重启应用才能生效。',
+      buttons: ['立即重启', '稍后']
+    });
+    if (response === 0) {
+      app.relaunch();
+      app.exit(0);
+    }
+  });
+  
+  // 标签节流：双开时冻结非活跃标签，资源全部给当前玩的标签
+  ipcMain.on('set-tab-throttle', (event, data) => {
+    try {
+      if (!data || !data.webContentsId) return;
+      const wc = webContents.fromId(data.webContentsId);
+      if (wc && !wc.isDestroyed()) {
+        wc.setBackgroundThrottling(!!data.throttled);
+      }
+    } catch (e) {}
   });
   
   createLauncherWindow();

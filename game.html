@@ -233,26 +233,6 @@
       height: 18px;
       background: var(--separator);
     }
-    .mem-status {
-      height: 24px;
-      padding: 0 10px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      border: 1px solid var(--btnBorder);
-      border-radius: 4px;
-      font-size: 12px;
-      color: var(--text);
-      cursor: default;
-      white-space: nowrap;
-      -webkit-app-region: no-drag;
-    }
-    .mem-dot { width: 8px; height: 8px; border-radius: 50%; background: #4caf50; }
-    .mem-status.normal .mem-dot { background: #4caf50; }
-    .mem-status.warn { color: #ff9800; }
-    .mem-status.warn .mem-dot { background: #ff9800; }
-    .mem-status.danger { color: #f44336; }
-    .mem-status.danger .mem-dot { background: #f44336; }
     .select-container {
       position: relative;
     }
@@ -565,13 +545,6 @@
       <button class="btn" id="btn-mute" title="切换静音">🔊</button>
       <div class="separator"></div>
       <button class="btn" id="btn-stretch" title="切换显示模式：原生分辨率 / 跟随窗口拉伸">拉伸</button>
-      <div class="separator"></div>
-      <button class="btn" id="btn-fps" title="显示/隐藏游戏实时帧率">FPS</button>
-      <div class="separator"></div>
-      <div class="mem-status normal" id="mem-status" title="当前游戏标签内存占用，过高时建议点击「刷新」释放">
-        <span class="mem-dot"></span>
-        <span id="mem-text">内存 --</span>
-      </div>
     </div>
     <div class="toolbar-right">
       <div class="window-controls">
@@ -615,18 +588,17 @@
     const speedSelect = document.getElementById('speed-select');
     const btnMute = document.getElementById('btn-mute');
     const btnStretch = document.getElementById('btn-stretch');
-    const btnFps = document.getElementById('btn-fps');
 
     let tabs = [];
     let activeTabId = null;
     let accounts = [];
     let currentGame = null;
+    let diskCache = true;
     let isMuted = false;
     let tabCounter = 0;
     let currentSpeed = 1;
     let isWindowActive = true;
     let stretchMode = false;
-    let fpsMode = false;
     let tabDisplayMode = 'sidebar';
 
     // IPC 通信
@@ -763,10 +735,11 @@
              /qlogin\.qq\.com/i.test(url);
     }
 
-    function getPartition(tabId) {
-      // 使用普通分区，让缓存正常工作
-      // 注：persist 分区会导致 Flash 插件加载问题，暂时不用
-      return 'tab-' + tabId;
+    function getPartition(tab) {
+      // diskCache 开启时用持久化分区（稳定索引命名，磁盘缓存+登录态可跨启动保留）
+      // 否则用普通内存分区
+      if (diskCache) return 'persist:game-' + tab.index;
+      return 'tab-' + tab.id;
     }
 
     // ===== 拉伸模式（原生分辨率 / 跟随窗口拉伸）=====
@@ -784,6 +757,9 @@
       '    var sx = window.innerWidth / w;',
       '    var sy = window.innerHeight / h;',
       '    if (sx <= 0 || sy <= 0) return;',
+      '    var key = sx.toFixed(4) + "x" + sy.toFixed(4);',
+      '    if (el.__narutoLastScale === key) return;',
+      '    el.__narutoLastScale = key;',
       '    el.style.position = "fixed";',
       '    el.style.left = "0px";',
       '    el.style.top = "0px";',
@@ -839,66 +815,28 @@
       try { window.gameAPI.setConfig('stretchMode', enabled); } catch (e) {}
     }
 
-    // ===== FPS 实时显示 =====
-    const FPS_ENABLE_JS = [
-      '(function() {',
-      '  if (window.__narutoFpsOn) return;',
-      '  window.__narutoFpsOn = true;',
-      '  var el = document.getElementById("__naruto_fps");',
-      '  if (!el) {',
-      '    el = document.createElement("div");',
-      '    el.id = "__naruto_fps";',
-      '    el.style.cssText = "position:fixed;top:8px;right:8px;z-index:2147483647;background:rgba(0,0,0,0.65);color:#4caf50;font:bold 14px monospace;padding:4px 8px;border-radius:4px;pointer-events:none;";',
-      '    (document.body || document.documentElement).appendChild(el);',
-      '  }',
-      '  var frames = 0, last = performance.now();',
-      '  function loop(now) {',
-      '    frames++;',
-      '    if (now - last >= 1000) {',
-      '      var fps = Math.round(frames * 1000 / (now - last));',
-      '      el.textContent = fps + " FPS";',
-      '      frames = 0;',
-      '      last = now;',
-      '    }',
-      '    window.__narutoFpsRaf = requestAnimationFrame(loop);',
-      '  }',
-      '  window.__narutoFpsRaf = requestAnimationFrame(loop);',
-      '})();'
-    ].join('\n');
-
-    const FPS_DISABLE_JS = [
-      '(function() {',
-      '  window.__narutoFpsOn = false;',
-      '  if (window.__narutoFpsRaf) { cancelAnimationFrame(window.__narutoFpsRaf); window.__narutoFpsRaf = null; }',
-      '  var el = document.getElementById("__naruto_fps");',
-      '  if (el) el.remove();',
-      '})();'
-    ].join('\n');
-
-    function applyFpsToWebview(webview, enable) {
+    // 后台标签画质降级 + wmode
+    function applyFlashQuality(webview, quality) {
       if (!webview) return;
-      const js = enable ? FPS_ENABLE_JS : FPS_DISABLE_JS;
+      let js;
+      if (quality === 'low') {
+        // 后台/隐藏标签：需要 opaque 参与 z-index 分层
+        js = '(function(){ var els = document.querySelectorAll("embed, object"); for (var i=0;i<els.length;i++){ try { els[i].setAttribute("quality", "low"); els[i].setAttribute("wmode", "opaque"); } catch(e){} } })();';
+      } else {
+        // 激活标签：画质最低 + 强制 wmode=direct（GPU 直连），获得最佳流畅度
+        js = '(function(){ var els = document.querySelectorAll("embed, object"); for (var i=0;i<els.length;i++){ try { els[i].setAttribute("quality", "low"); els[i].setAttribute("wmode", "direct"); } catch(e){} } })();';
+      }
       try {
         webview.executeJavaScript(js).catch(function() {});
       } catch (e) {}
     }
 
-    function setFpsMode(enabled) {
-      fpsMode = enabled;
-      if (btnFps) btnFps.classList.toggle('active', enabled);
-      tabs.forEach(function(tab) {
-        if (tab._webview) {
-          applyFpsToWebview(tab._webview, enabled);
-        }
-      });
-    }
-
-    // 后台标签画质降级 + wmode
-    function applyFlashQuality(webview, quality) {
-      if (!webview) return;
-      const js = '(function(){ var els = document.querySelectorAll("embed, object"); for (var i=0;i<els.length;i++){ try { els[i].setAttribute("quality", "' + quality + '"); els[i].setAttribute("wmode", "opaque"); } catch(e){} } })();';
+    // 标签节流：冻结非活跃标签，资源全部给当前玩的标签
+    function setTabThrottle(tab, throttled) {
+      if (!tab || !tab._webview) return;
       try {
-        webview.executeJavaScript(js).catch(function() {});
+        const id = tab._webview.getWebContentsId();
+        if (id) ipcRenderer.send('set-tab-throttle', { webContentsId: id, throttled: !!throttled });
       } catch (e) {}
     }
 
@@ -988,9 +926,9 @@
       webview.src = currentGame ? currentGame.url : 'https://huoying.qq.com/';
       webview.setAttribute('plugins', '');
       // 不设置 allowpopups，阻止 window.open 弹窗
-      webview.setAttribute('partition', getPartition(tab.id));
+      webview.setAttribute('partition', getPartition(tab));
       // nativeWindowOpen=no 阻止原生窗口打开
-      webview.setAttribute('webpreferences', 'allowRunningInsecureContent=yes,webSecurity=no,nativeWindowOpen=no');
+      webview.setAttribute('webpreferences', 'allowRunningInsecureContent=yes,webSecurity=no,nativeWindowOpen=no,backgroundThrottling=no');
       webview.dataset.tabId = tab.id;
 
       if (tab.id !== activeTabId) {
@@ -1025,9 +963,6 @@
         applyFlashQuality(webview, tab.id === activeTabId ? 'high' : 'low');
         if (stretchMode) {
           applyStretchToWebview(webview, true);
-        }
-        if (fpsMode) {
-          applyFpsToWebview(webview, true);
         }
       });
 
@@ -1141,11 +1076,13 @@
         prevTab._webview.classList.add('hidden');
         try { prevTab._webview.setAudioMuted(true); } catch (e) {}
         applyFlashQuality(prevTab._webview, 'low');
+        setTabThrottle(prevTab, true);   // 冻结旧标签
       }
       if (nextTab && nextTab._webview) {
         nextTab._webview.classList.remove('hidden');
         try { nextTab._webview.setAudioMuted(isMuted); } catch (e) {}
         applyFlashQuality(nextTab._webview, 'high');
+        setTabThrottle(nextTab, false);  // 新标签全速
       }
 
       renderTabs();
@@ -1370,10 +1307,6 @@
       setStretchMode(!stretchMode);
     });
 
-    btnFps.addEventListener('click', () => {
-      setFpsMode(!fpsMode);
-    });
-
     document.getElementById('btn-min').addEventListener('click', () => {
       window.gameAPI.minWindow();
     });
@@ -1465,6 +1398,7 @@
     });
 
     ipcRenderer.on('game-info', (event, data) => {
+      diskCache = (data.diskCache !== false);
       currentGame = data.game;
       accounts = data.accounts || [];
 
@@ -1485,6 +1419,7 @@
         if (tab._webview && tab.id !== activeTabId) {
           tab._webview.classList.add('paused');
         }
+        if (tab.id !== activeTabId) setTabThrottle(tab, true);
       });
     });
 
@@ -1494,6 +1429,7 @@
         if (tab._webview && tab.id !== activeTabId) {
           tab._webview.classList.remove('paused');
         }
+        setTabThrottle(tab, tab.id !== activeTabId);
       });
     });
 
@@ -1591,61 +1527,6 @@
         }
       }).catch(function() {});
     } catch (e) {}
-
-    // 内存监控：定时上报各标签内存，超限自动重载后台标签
-    function reportMemory() {
-      try {
-        const list = tabs.map(function(t) {
-          return {
-            id: t.id,
-            webContentsId: t._webview ? t._webview.getWebContentsId() : null
-          };
-        }).filter(function(t) { return t.webContentsId; });
-        if (list.length) ipcRenderer.send('memory-check', list);
-      } catch (e) {}
-    }
-
-    reportMemory();
-    setInterval(reportMemory, 60000);
-
-    function updateMemStatus(mem) {
-      const el = document.getElementById('mem-status');
-      const text = document.getElementById('mem-text');
-      if (!el || !text) return;
-      if (!mem || mem <= 0) {
-        el.className = 'mem-status normal';
-        text.textContent = '内存 --';
-      } else if (mem > 2500) {
-        el.className = 'mem-status danger';
-        text.textContent = '内存 ' + mem + 'MB 过高';
-      } else if (mem > 1500) {
-        el.className = 'mem-status warn';
-        text.textContent = '内存 ' + mem + 'MB 偏高';
-      } else {
-        el.className = 'mem-status normal';
-        text.textContent = '内存 ' + mem + 'MB';
-      }
-    }
-
-    ipcRenderer.on('memory-status', function(event, statusList) {
-      const tab = tabs.find(function(t) { return t.id === activeTabId; });
-      if (!tab) return;
-      const info = (statusList || []).find(function(s) { return s.id === tab.id; });
-      updateMemStatus(info ? info.mem : 0);
-    });
-
-    ipcRenderer.on('memory-alert', function(event, highMemTabs) {
-      (highMemTabs || []).forEach(function(item) {
-        const tab = tabs.find(function(t) { return t.id === item.id; });
-        if (!tab || !tab._webview) return;
-        if (tab.id === activeTabId) {
-          window.gameAPI.debugLog('warn', 'memory', '激活标签内存过高: ' + item.mem + 'MB');
-        } else {
-          try { tab._webview.reload(); } catch (e) {}
-          window.gameAPI.debugLog('info', 'memory', '后台标签自动重载释放内存: ' + item.mem + 'MB');
-        }
-      });
-    });
 
     // 页面加载完成后请求游戏信息
     document.addEventListener('DOMContentLoaded', () => {
