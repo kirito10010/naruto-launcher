@@ -46,15 +46,23 @@
       margin-right: 8px;
     }
     .tabs-container {
+      display: none;
+      align-items: center;
+      gap: 2px;
+      overflow: hidden;
+      -webkit-app-region: no-drag;
+    }
+    .tabs-list {
       display: flex;
       align-items: center;
       gap: 2px;
+      overflow: hidden;
     }
     .tab {
-      height: 28px;
+      height: 24px;
       padding: 0 12px;
       border: 1px solid var(--btnBorder);
-      border-radius: 4px 4px 0 0;
+      border-radius: 4px;
       background: linear-gradient(var(--btnBg), var(--btnHover));
       color: var(--text);
       font-size: 12px;
@@ -62,15 +70,16 @@
       display: flex;
       align-items: center;
       gap: 6px;
+      white-space: nowrap;
       -webkit-app-region: no-drag;
     }
     .tab:hover {
       background: linear-gradient(var(--btnHover), #e8e8e8);
     }
     .tab.active {
-      background: #fff;
-      border-bottom-color: #fff;
-      color: #333;
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
     }
     .tab-close {
       font-size: 10px;
@@ -80,9 +89,60 @@
       opacity: 1;
       color: #e74c3c;
     }
+    .tab.active .tab-close:hover {
+      color: #fff;
+    }
     .tab-add {
-      height: 28px;
-      width: 28px;
+      height: 24px;
+      width: 24px;
+      border: 1px solid var(--btnBorder);
+      border-radius: 4px;
+      background: linear-gradient(var(--btnBg), var(--btnHover));
+      color: var(--text);
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      -webkit-app-region: no-drag;
+    }
+    .tab-add:hover {
+      background: linear-gradient(var(--btnHover), #e8e8e8);
+    }
+    .tab-sidebar {
+      position: fixed;
+      left: -220px;
+      top: var(--toolbarHeight);
+      width: 220px;
+      height: calc(100vh - var(--toolbarHeight));
+      background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+      border-right: 1px solid var(--border);
+      transition: left 0.25s ease;
+      z-index: 900;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 2px 0 8px rgba(0,0,0,0.08);
+    }
+    .tab-sidebar.visible {
+      left: 0;
+    }
+    .tab-sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .tab-sidebar-header .tab-sidebar-title {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+    }
+    .tab-sidebar-add {
+      height: 24px;
+      width: 24px;
       border: 1px solid var(--btnBorder);
       border-radius: 4px;
       background: linear-gradient(var(--btnBg), var(--btnHover));
@@ -94,8 +154,52 @@
       justify-content: center;
       -webkit-app-region: no-drag;
     }
-    .tab-add:hover {
+    .tab-sidebar-add:hover {
       background: linear-gradient(var(--btnHover), #e8e8e8);
+    }
+    .tab-sidebar-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px;
+    }
+    .tab-sidebar-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 12px;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      cursor: pointer;
+      color: var(--text);
+      font-size: 12px;
+      background: transparent;
+      -webkit-app-region: no-drag;
+    }
+    .tab-sidebar-item:hover {
+      background: var(--btnHover);
+    }
+    .tab-sidebar-item.active {
+      background: var(--accent);
+      color: #fff;
+    }
+    .tab-sidebar-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-right: 6px;
+    }
+    .tab-sidebar-close {
+      font-size: 12px;
+      opacity: 0.6;
+      flex-shrink: 0;
+    }
+    .tab-sidebar-close:hover {
+      opacity: 1;
+      color: #e74c3c;
+    }
+    .tab-sidebar-item.active .tab-sidebar-close:hover {
+      color: #fff;
     }
     .btn {
       height: 24px;
@@ -120,8 +224,8 @@
       background: linear-gradient(#e8e8e8, #d8d8d8);
     }
     .btn.active {
-      background: linear-gradient(#e74c3c, #c0392b);
-      border-color: #a0291b;
+      background: var(--accent);
+      border-color: var(--accent);
       color: #fff;
     }
     .separator {
@@ -129,6 +233,26 @@
       height: 18px;
       background: var(--separator);
     }
+    .mem-status {
+      height: 24px;
+      padding: 0 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--btnBorder);
+      border-radius: 4px;
+      font-size: 12px;
+      color: var(--text);
+      cursor: default;
+      white-space: nowrap;
+      -webkit-app-region: no-drag;
+    }
+    .mem-dot { width: 8px; height: 8px; border-radius: 50%; background: #4caf50; }
+    .mem-status.normal .mem-dot { background: #4caf50; }
+    .mem-status.warn { color: #ff9800; }
+    .mem-status.warn .mem-dot { background: #ff9800; }
+    .mem-status.danger { color: #f44336; }
+    .mem-status.danger .mem-dot { background: #f44336; }
     .select-container {
       position: relative;
     }
@@ -173,6 +297,7 @@
       align-items: center;
       justify-content: center;
       -webkit-appearance: none;
+      appearance: none;
     }
     .control-btn:hover {
       background: rgba(0,0,0,.05);
@@ -192,15 +317,15 @@
       left: 0;
       width: 100%;
       height: 100%;
+      z-index: 1;
+      background: #fff;
     }
     .webview-wrap webview.hidden {
-      width: 0;
-      height: 0;
+      z-index: 0;
       pointer-events: none;
     }
     .webview-wrap webview.paused {
-      width: 0;
-      height: 0;
+      z-index: 0;
       pointer-events: none;
     }
     .account-sidebar {
@@ -412,18 +537,16 @@
 <body>
   <div class="toolbar">
     <div class="toolbar-left">
+      <button class="btn" id="btn-tab-sidebar" title="展开/收起标签栏">≡</button>
       <span class="title" id="windowTitle">火影忍者Online</span>
       <div class="tabs-container" id="tabs-container">
-        <div class="tab active" data-tab="1">
-          <span>窗口1</span>
-          <span class="tab-close" data-tab="1">×</span>
-        </div>
-        <div class="tab-add" id="tab-add">+</div>
+        <div class="tabs-list" id="tabs-list"></div>
+        <div class="tab-add" id="tab-add-h">+</div>
       </div>
     </div>
     <div class="toolbar-center">
       <button class="btn" id="btn-refresh" title="刷新页面（保留登录状态）">刷新</button>
-      <button class="btn" id="btn-clear-cache" title="清空缓存并重新加载">清空缓存</button>
+      <button class="btn" id="btn-tab-mode" title="切换标签显示方式：侧边栏 / 顶部任务栏">标签栏</button>
       <div class="separator"></div>
       <button class="btn" id="btn-accounts" title="账号管理">👤 账号</button>
       <div class="separator"></div>
@@ -442,6 +565,13 @@
       <button class="btn" id="btn-mute" title="切换静音">🔊</button>
       <div class="separator"></div>
       <button class="btn" id="btn-stretch" title="切换显示模式：原生分辨率 / 跟随窗口拉伸">拉伸</button>
+      <div class="separator"></div>
+      <button class="btn" id="btn-fps" title="显示/隐藏游戏实时帧率">FPS</button>
+      <div class="separator"></div>
+      <div class="mem-status normal" id="mem-status" title="当前游戏标签内存占用，过高时建议点击「刷新」释放">
+        <span class="mem-dot"></span>
+        <span id="mem-text">内存 --</span>
+      </div>
     </div>
     <div class="toolbar-right">
       <div class="window-controls">
@@ -453,6 +583,14 @@
   </div>
 
   <div class="webview-wrap" id="container"></div>
+
+  <div class="tab-sidebar" id="tab-sidebar">
+    <div class="tab-sidebar-header">
+      <span class="tab-sidebar-title">标签页</span>
+      <button class="tab-sidebar-add" id="tab-sidebar-add" title="新建标签">+</button>
+    </div>
+    <div class="tab-sidebar-list" id="tab-sidebar-list"></div>
+  </div>
 
   <div class="account-sidebar" id="account-sidebar">
     <div class="account-sidebar-header">
@@ -466,10 +604,18 @@
 
   <script>
     const container = document.getElementById('container');
-    const tabBar = document.getElementById('tabs-container');
+    const tabSidebar = document.getElementById('tab-sidebar');
+    const tabSidebarList = document.getElementById('tab-sidebar-list');
+    const btnTabSidebar = document.getElementById('btn-tab-sidebar');
+    const btnTabSidebarAdd = document.getElementById('tab-sidebar-add');
+    const tabsContainer = document.getElementById('tabs-container');
+    const tabsList = document.getElementById('tabs-list');
+    const tabAddH = document.getElementById('tab-add-h');
+    const btnTabMode = document.getElementById('btn-tab-mode');
     const speedSelect = document.getElementById('speed-select');
     const btnMute = document.getElementById('btn-mute');
     const btnStretch = document.getElementById('btn-stretch');
+    const btnFps = document.getElementById('btn-fps');
 
     let tabs = [];
     let activeTabId = null;
@@ -480,6 +626,8 @@
     let currentSpeed = 1;
     let isWindowActive = true;
     let stretchMode = false;
+    let fpsMode = false;
+    let tabDisplayMode = 'sidebar';
 
     // IPC 通信
     const ipcRenderer = require('electron').ipcRenderer;
@@ -549,17 +697,19 @@
       },
       // 刷新页面
       refreshPage: function() {
-        const tab = tabs.find(t => t.id === activeTabId);
+        var tab = tabs.find(function(t) { return t.id === activeTabId; });
         if (tab && tab._webview) {
-          tab._webview.reload();
-        }
-      },
-      // 清空缓存
-      clearCache: function() {
-        const tab = tabs.find(t => t.id === activeTabId);
-        if (tab && tab._webview) {
-          tab._webview.clearCache();
-          tab._webview.reload();
+          tab._manualRefresh = true;
+          ipcRenderer.send('refresh-page');
+          // 兜底：2.5 秒后若插件崩溃事件未触发自动重载，则强制冷加载
+          setTimeout(function() {
+            if (tab && tab._webview && tab._manualRefresh) {
+              tab._manualRefresh = false;
+              try { tab._webview.reloadIgnoringCache(); } catch (e) {
+                try { tab._webview.reload(); } catch (e2) {}
+              }
+            }
+          }, 2500);
         }
       },
       // 关闭窗口
@@ -689,6 +839,69 @@
       try { window.gameAPI.setConfig('stretchMode', enabled); } catch (e) {}
     }
 
+    // ===== FPS 实时显示 =====
+    const FPS_ENABLE_JS = [
+      '(function() {',
+      '  if (window.__narutoFpsOn) return;',
+      '  window.__narutoFpsOn = true;',
+      '  var el = document.getElementById("__naruto_fps");',
+      '  if (!el) {',
+      '    el = document.createElement("div");',
+      '    el.id = "__naruto_fps";',
+      '    el.style.cssText = "position:fixed;top:8px;right:8px;z-index:2147483647;background:rgba(0,0,0,0.65);color:#4caf50;font:bold 14px monospace;padding:4px 8px;border-radius:4px;pointer-events:none;";',
+      '    (document.body || document.documentElement).appendChild(el);',
+      '  }',
+      '  var frames = 0, last = performance.now();',
+      '  function loop(now) {',
+      '    frames++;',
+      '    if (now - last >= 1000) {',
+      '      var fps = Math.round(frames * 1000 / (now - last));',
+      '      el.textContent = fps + " FPS";',
+      '      frames = 0;',
+      '      last = now;',
+      '    }',
+      '    window.__narutoFpsRaf = requestAnimationFrame(loop);',
+      '  }',
+      '  window.__narutoFpsRaf = requestAnimationFrame(loop);',
+      '})();'
+    ].join('\n');
+
+    const FPS_DISABLE_JS = [
+      '(function() {',
+      '  window.__narutoFpsOn = false;',
+      '  if (window.__narutoFpsRaf) { cancelAnimationFrame(window.__narutoFpsRaf); window.__narutoFpsRaf = null; }',
+      '  var el = document.getElementById("__naruto_fps");',
+      '  if (el) el.remove();',
+      '})();'
+    ].join('\n');
+
+    function applyFpsToWebview(webview, enable) {
+      if (!webview) return;
+      const js = enable ? FPS_ENABLE_JS : FPS_DISABLE_JS;
+      try {
+        webview.executeJavaScript(js).catch(function() {});
+      } catch (e) {}
+    }
+
+    function setFpsMode(enabled) {
+      fpsMode = enabled;
+      if (btnFps) btnFps.classList.toggle('active', enabled);
+      tabs.forEach(function(tab) {
+        if (tab._webview) {
+          applyFpsToWebview(tab._webview, enabled);
+        }
+      });
+    }
+
+    // 后台标签画质降级 + wmode
+    function applyFlashQuality(webview, quality) {
+      if (!webview) return;
+      const js = '(function(){ var els = document.querySelectorAll("embed, object"); for (var i=0;i<els.length;i++){ try { els[i].setAttribute("quality", "' + quality + '"); els[i].setAttribute("wmode", "opaque"); } catch(e){} } })();';
+      try {
+        webview.executeJavaScript(js).catch(function() {});
+      } catch (e) {}
+    }
+
     // 快速登录注入
     function injectQuickLogin(webview, qqNumber, password) {
       const js = [
@@ -809,8 +1022,12 @@
 
       webview.addEventListener('did-stop-loading', () => {
         tryPendingInject(tab);
+        applyFlashQuality(webview, tab.id === activeTabId ? 'high' : 'low');
         if (stretchMode) {
           applyStretchToWebview(webview, true);
+        }
+        if (fpsMode) {
+          applyFpsToWebview(webview, true);
         }
       });
 
@@ -823,6 +1040,7 @@
       // 处理插件崩溃（包括 Flash）
       webview.addEventListener('plugin-crashed', (e) => {
         window.gameAPI.debugLog('error', 'webview', '插件崩溃: ' + (e.name || 'unknown'));
+        if (tab._manualRefresh) return; // 手动刷新已接管，避免双重 reload
         // 尝试刷新页面恢复 Flash
         setTimeout(() => {
           if (tab._webview && !tab._webview.isCrashed()) {
@@ -922,32 +1140,44 @@
       if (prevTab && prevTab._webview) {
         prevTab._webview.classList.add('hidden');
         try { prevTab._webview.setAudioMuted(true); } catch (e) {}
+        applyFlashQuality(prevTab._webview, 'low');
       }
       if (nextTab && nextTab._webview) {
         nextTab._webview.classList.remove('hidden');
         try { nextTab._webview.setAudioMuted(isMuted); } catch (e) {}
+        applyFlashQuality(nextTab._webview, 'high');
       }
 
       renderTabs();
     }
 
-    // 渲染标签栏
+    // 渲染标签（侧边栏 + 顶部任务栏）
     function renderTabs() {
-      const addBtn = document.getElementById('tab-add');
-      tabBar.innerHTML = '';
+      tabSidebarList.innerHTML = '';
+      tabsList.innerHTML = '';
 
       tabs.forEach(tab => {
+        const item = document.createElement('div');
+        item.className = 'tab-sidebar-item' + (tab.id === activeTabId ? ' active' : '');
+        item.dataset.tab = tab.index;
+        item.innerHTML = '<span class="tab-sidebar-name">' + escapeHtml(tab.name) + '</span><span class="tab-sidebar-close" data-tab="' + tab.index + '">×</span>';
+        tabSidebarList.appendChild(item);
+
         const tabEl = document.createElement('div');
         tabEl.className = 'tab' + (tab.id === activeTabId ? ' active' : '');
         tabEl.dataset.tab = tab.index;
         tabEl.innerHTML = '<span>' + escapeHtml(tab.name) + '</span><span class="tab-close" data-tab="' + tab.index + '">×</span>';
-        tabBar.appendChild(tabEl);
+        tabsList.appendChild(tabEl);
       });
+    }
 
-      // 重新添加添加按钮
-      addBtn.id = 'tab-add';
-      addBtn.textContent = '+';
-      tabBar.appendChild(addBtn);
+    function setTabDisplayMode(mode) {
+      tabDisplayMode = mode;
+      const isTaskbar = (mode === 'taskbar');
+      tabsContainer.style.display = isTaskbar ? 'flex' : 'none';
+      tabSidebar.classList.remove('visible');
+      btnTabSidebar.style.display = isTaskbar ? 'none' : '';
+      if (btnTabMode) btnTabMode.classList.toggle('active', isTaskbar);
     }
 
     // 账号侧边栏
@@ -1066,24 +1296,24 @@
     }
 
     // 事件绑定
-    document.getElementById('tab-add').addEventListener('click', () => {
+    btnTabSidebarAdd.addEventListener('click', () => {
       addTab();
     });
 
-    tabBar.addEventListener('click', (e) => {
+    btnTabSidebar.addEventListener('click', () => {
+      tabSidebar.classList.toggle('visible');
+    });
+
+    tabSidebarList.addEventListener('click', (e) => {
       const target = e.target;
-      if (target.classList.contains('btn') || target.closest('.btn')) {
-        return;
-      }
-      const tab = target.closest('.tab');
-      if (tab) {
-        const tabIndex = parseInt(tab.dataset.tab);
-        if (e.target.classList.contains('tab-close')) {
-          removeTabByIndex(tabIndex);
-        } else {
-          const tabObj = tabs.find(t => t.index === tabIndex);
-          if (tabObj) switchTab(tabObj.id);
-        }
+      const item = target.closest('.tab-sidebar-item');
+      if (!item) return;
+      const tabIndex = parseInt(item.dataset.tab);
+      if (target.classList.contains('tab-sidebar-close')) {
+        removeTabByIndex(tabIndex);
+      } else {
+        const tabObj = tabs.find(t => t.index === tabIndex);
+        if (tabObj) switchTab(tabObj.id);
       }
     });
 
@@ -1096,8 +1326,25 @@
       window.gameAPI.refreshPage();
     });
 
-    document.getElementById('btn-clear-cache').addEventListener('click', () => {
-      window.gameAPI.clearCache();
+    btnTabMode.addEventListener('click', () => {
+      setTabDisplayMode(tabDisplayMode === 'sidebar' ? 'taskbar' : 'sidebar');
+    });
+
+    tabAddH.addEventListener('click', () => {
+      addTab();
+    });
+
+    tabsList.addEventListener('click', (e) => {
+      const target = e.target;
+      const tabEl = target.closest('.tab');
+      if (!tabEl) return;
+      const tabIndex = parseInt(tabEl.dataset.tab);
+      if (target.classList.contains('tab-close')) {
+        removeTabByIndex(tabIndex);
+      } else {
+        const tabObj = tabs.find(t => t.index === tabIndex);
+        if (tabObj) switchTab(tabObj.id);
+      }
     });
 
     speedSelect.addEventListener('change', (e) => {
@@ -1121,6 +1368,10 @@
 
     btnStretch.addEventListener('click', () => {
       setStretchMode(!stretchMode);
+    });
+
+    btnFps.addEventListener('click', () => {
+      setFpsMode(!fpsMode);
     });
 
     document.getElementById('btn-min').addEventListener('click', () => {
@@ -1340,6 +1591,61 @@
         }
       }).catch(function() {});
     } catch (e) {}
+
+    // 内存监控：定时上报各标签内存，超限自动重载后台标签
+    function reportMemory() {
+      try {
+        const list = tabs.map(function(t) {
+          return {
+            id: t.id,
+            webContentsId: t._webview ? t._webview.getWebContentsId() : null
+          };
+        }).filter(function(t) { return t.webContentsId; });
+        if (list.length) ipcRenderer.send('memory-check', list);
+      } catch (e) {}
+    }
+
+    reportMemory();
+    setInterval(reportMemory, 60000);
+
+    function updateMemStatus(mem) {
+      const el = document.getElementById('mem-status');
+      const text = document.getElementById('mem-text');
+      if (!el || !text) return;
+      if (!mem || mem <= 0) {
+        el.className = 'mem-status normal';
+        text.textContent = '内存 --';
+      } else if (mem > 2500) {
+        el.className = 'mem-status danger';
+        text.textContent = '内存 ' + mem + 'MB 过高';
+      } else if (mem > 1500) {
+        el.className = 'mem-status warn';
+        text.textContent = '内存 ' + mem + 'MB 偏高';
+      } else {
+        el.className = 'mem-status normal';
+        text.textContent = '内存 ' + mem + 'MB';
+      }
+    }
+
+    ipcRenderer.on('memory-status', function(event, statusList) {
+      const tab = tabs.find(function(t) { return t.id === activeTabId; });
+      if (!tab) return;
+      const info = (statusList || []).find(function(s) { return s.id === tab.id; });
+      updateMemStatus(info ? info.mem : 0);
+    });
+
+    ipcRenderer.on('memory-alert', function(event, highMemTabs) {
+      (highMemTabs || []).forEach(function(item) {
+        const tab = tabs.find(function(t) { return t.id === item.id; });
+        if (!tab || !tab._webview) return;
+        if (tab.id === activeTabId) {
+          window.gameAPI.debugLog('warn', 'memory', '激活标签内存过高: ' + item.mem + 'MB');
+        } else {
+          try { tab._webview.reload(); } catch (e) {}
+          window.gameAPI.debugLog('info', 'memory', '后台标签自动重载释放内存: ' + item.mem + 'MB');
+        }
+      });
+    });
 
     // 页面加载完成后请求游戏信息
     document.addEventListener('DOMContentLoaded', () => {

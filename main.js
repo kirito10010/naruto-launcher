@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, screen, Tray, Menu, nativeImage, dialog } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, screen, Tray, Menu, nativeImage, dialog, webContents } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
@@ -880,8 +880,6 @@ app.commandLine.appendSwitch('ignore-gpu-blacklist');
 app.commandLine.appendSwitch('no-sandbox');
 
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
-app.commandLine.appendSwitch('disable-frame-rate-limit');
-app.commandLine.appendSwitch('disable-gpu-vsync');
 app.commandLine.appendSwitch('enable-fast-startup');
 app.commandLine.appendSwitch('high-dpi-support', '1');
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
@@ -895,8 +893,9 @@ function createLauncherWindow() {
   const display = screen.getPrimaryDisplay();
   const dpr = display.scaleFactor || 1;
   
-  const baseWidth = 360;
-  const baseHeight = 500;
+  // 标准塔罗牌比例：宽:高 = 7:12
+  const baseWidth = 350;
+  const baseHeight = 600;
   
   const scaledWidth = Math.max(baseWidth, Math.floor(baseWidth * dpr * 0.8));
   const scaledHeight = Math.max(baseHeight, Math.floor(baseHeight * dpr * 0.8));
@@ -1337,7 +1336,8 @@ function createGameWindow(url, gameName, account) {
   });
 
   addListener('refresh-page', (event) => {
-    // 由 game.html 处理
+    // 杀掉残留 Flash 插件进程，触发 plugin-crashed 自动冷启动恢复
+    killFlashPluginProcesses();
   });
 
   addListener('clear-cache', (event) => {
@@ -1433,6 +1433,9 @@ function createGameWindow(url, gameName, account) {
       config.lastSpeed = 1;
       saveConfig();
 
+      // 清理残留的 Flash 插件进程，防止长时间全屏后僵尸进程导致下次打开白屏
+      killFlashPluginProcesses();
+
       if (fs.existsSync(speedctlPath)) {
         updateNativeRate(1);
       }
@@ -1449,6 +1452,8 @@ function createGameWindow(url, gameName, account) {
         setTimeout(() => {
           if (!launcherWindow.isDestroyed()) {
             launcherWindow.setAlwaysOnTop(false);
+            // 置顶切换可能干扰重绘，强制刷新一次
+            try { launcherWindow.webContents.invalidate(); } catch (e) {}
           }
         }, 100);
       }
@@ -1640,6 +1645,76 @@ ipcMain.on('refresh-page', (event) => {
 
 ipcMain.on('log-message', (event, message, level) => {
   log(message, level);
+});
+
+// 内存监控：game.html 定时上报各标签 webContentsId，超阈值回传提示重载
+function getMemoryMB(pid) {
+  try {
+    const m = app.getAppMetrics().find(x => x.pid === pid);
+    return (m && m.memory) ? Math.round(m.memory.workingSetSize / 1024) : 0;
+  } catch (e) { return 0; }
+}
+
+// 标签内存超过该值（MB）时清缓存释放，不重载，避免中断游戏
+const ACTIVE_MEM_CLEAR_THRESHOLD = 2500;
+// 清缓存冷却时间（毫秒），避免反复清理导致地图瓦片频繁重下载
+const CACHE_CLEAR_COOLDOWN = 3 * 60 * 1000;
+// 记录每个标签上次清缓存时间：webContentsId -> timestamp
+const lastCacheClear = {};
+
+// 强杀残留的 Flash (PPAPI) 插件进程，避免长时间全屏后僵尸进程占用 GPU 表面导致白屏
+function killFlashPluginProcesses() {
+  try {
+    const metrics = app.getAppMetrics();
+    const pluginTypes = ['pepper plugin', 'ppapi plugin', 'ppapi plugin broker', 'plugin'];
+    let killed = 0;
+    for (const m of metrics) {
+      const t = String(m.type || '').toLowerCase();
+      if (pluginTypes.includes(t) && m.pid && m.pid !== process.pid) {
+        try {
+          process.kill(m.pid);
+          injectedPids.delete(m.pid);
+          killed++;
+        } catch (e) {}
+      }
+    }
+    if (killed > 0) log('已清理残留 Flash 插件进程: ' + killed + ' 个');
+  } catch (e) {
+    log('清理 Flash 插件进程失败: ' + e.message, 'WARN');
+  }
+}
+
+ipcMain.on('memory-check', (event, tabList) => {
+  const highMem = [];
+  const statusList = [];
+  for (const t of (tabList || [])) {
+    try {
+      if (!t || !t.webContentsId) continue;
+      const wc = webContents.fromId(t.webContentsId);
+      if (!wc || wc.isDestroyed()) continue;
+      const mem = getMemoryMB(wc.getOSProcessId());
+      statusList.push({ id: t.id, mem });
+      if (mem > 1500) highMem.push({ id: t.id, mem });
+
+      // 内存超过 2500MB：只清缓存不重载，避免中断游戏
+      if (mem > ACTIVE_MEM_CLEAR_THRESHOLD) {
+        const now = Date.now();
+        const last = lastCacheClear[t.webContentsId] || 0;
+        if (now - last > CACHE_CLEAR_COOLDOWN) {
+          lastCacheClear[t.webContentsId] = now;
+          wc.session.clearCache().then(function() {
+            log('标签 ' + t.id + ' 内存 ' + mem + 'MB 超限，已清理缓存（不重载）');
+          }).catch(function(err) {
+            log('清理标签缓存失败: ' + err.message, 'WARN');
+          });
+        }
+      }
+    } catch (e) {}
+  }
+  try { event.sender.send('memory-status', statusList); } catch (e) {}
+  if (highMem.length) {
+    try { event.sender.send('memory-alert', highMem); } catch (e) {}
+  }
 });
 
 function initAutoUpdater() {
@@ -2288,11 +2363,14 @@ app.whenReady().then(() => {
     
     if (launcherWindow && !launcherWindow.isDestroyed()) {
       launcherWindow.webContents.send('theme-changed', theme);
+      // 强制重绘，修复启动器隐藏后重新显示时主题不刷新的问题
+      try { launcherWindow.webContents.invalidate(); } catch (e) {}
     }
     
-    gameWindows.forEach(({ win }) => {
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('theme-changed', theme);
+    // 游戏窗口监听的是 theme-update，且加空值保护避免解构崩溃
+    gameWindows.forEach((gw) => {
+      if (gw && gw.win && !gw.win.isDestroyed()) {
+        gw.win.webContents.send('theme-update', theme);
       }
     });
   });
