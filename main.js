@@ -318,7 +318,7 @@ function getFlashPath() {
   const arch = process.arch === 'x64' ? '64' : '32';
   const sysDir = process.arch === 'x64' ? 'System32' : 'SysWOW64';
 
-  // 读取 Flash 选择（内置国际版 / 系统国内版），此函数在 config 加载前执行，故直接读文件
+  // 读取 Flash 选择（内置国际版 / 内置国内版），此函数在 config 加载前执行，故直接读文件
   let flashChoice = 'bundled';
   try {
     if (fs.existsSync(CONFIG_FILE)) {
@@ -327,23 +327,21 @@ function getFlashPath() {
     }
   } catch (e) {}
 
-  const bundled = [
-    // 内置 32.0.0.344（与竞品一致，更稳定）
-    getResourcePath('flash', `pepflashplayer${arch}_32_0_0_344.dll`),
-    getResourcePath('flash', `pepflashplayer${arch}_34_0_0_380.dll`),
-    getResourcePath('flash', 'pepflashplayer.dll'),
-    `C:\\Windows\\${sysDir}\\Macromed\\Flash\\pepflashplayer${arch}_32_0_0_344.dll`,
-    path.join(__dirname, 'flash', 'pepflashplayer.dll')
-  ];
+  const bundled32 = getResourcePath('flash', `pepflashplayer${arch}_32_0_0_344.dll`);
+  const bundled34 = getResourcePath('flash', `pepflashplayer${arch}_34_0_0_380.dll`);
+  const system32 = `C:\\Windows\\${sysDir}\\Macromed\\Flash\\pepflashplayer${arch}_32_0_0_344.dll`;
+  const system34 = `C:\\Windows\\${sysDir}\\Macromed\\Flash\\pepflashplayer${arch}_34_0_0_380.dll`;
+  const generic = getResourcePath('flash', 'pepflashplayer.dll');
+  const devFlash = path.join(__dirname, 'flash', 'pepflashplayer.dll');
 
-  // 系统国内重橙版 34.0.0.380
-  const system = [
-    `C:\\Windows\\${sysDir}\\Macromed\\Flash\\pepflashplayer${arch}_34_0_0_380.dll`,
-    `C:\\Windows\\System32\\Macromed\\Flash\\pepflashplayer64_34_0_0_380.dll`,
-    `C:\\Windows\\SysWOW64\\Macromed\\Flash\\pepflashplayer32_34_0_0_380.dll`
-  ];
-
-  const paths = (flashChoice === 'system') ? system.concat(bundled) : bundled.concat(system);
+  let paths;
+  if (flashChoice === 'system') {
+    // 国内版：优先内置 34（已打包，别人电脑也能用），其次系统 34，最后回退内置 32
+    paths = [bundled34, system34, bundled32, generic, devFlash];
+  } else {
+    // 国际版：内置 32，其次系统 32，最后内置 34
+    paths = [bundled32, system32, bundled34, generic, devFlash];
+  }
 
   for (const p of paths) {
     if (fs.existsSync(p)) {
@@ -1130,7 +1128,7 @@ function createLauncherWindow() {
       <label>Flash 版本</label>
       <select id="flashSelect" onchange="changeFlash(this.value)">
         <option value="bundled">内置国际版 32.0.0.344</option>
-        <option value="system">系统国内版 34.0.0.380</option>
+        <option value="system">内置国内版 34.0.0.380</option>
       </select>
     </div>
   </div>
@@ -2412,12 +2410,12 @@ app.whenReady().then(() => {
     });
   });
   
-  // Flash 版本选择：内置国际版 / 系统国内版
+  // Flash 版本选择：内置国际版 / 内置国内版
   ipcMain.on('set-flash-choice', async (event, choice) => {
     config.flashChoice = (choice === 'system') ? 'system' : 'bundled';
     saveConfig();
     log('Flash 版本已切换为: ' + config.flashChoice);
-    const label = (config.flashChoice === 'system') ? '系统国内版 34.0.0.380' : '内置国际版 32.0.0.344';
+    const label = (config.flashChoice === 'system') ? '内置国内版 34.0.0.380' : '内置国际版 32.0.0.344';
     const { response } = await dialog.showMessageBox({
       type: 'info',
       title: 'Flash 版本切换',
