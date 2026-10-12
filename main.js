@@ -4,11 +4,45 @@ const path = require('path');
 const fs = require('fs');
 const { execFile, exec, spawn } = require('child_process');
 const os = require('os');
+const capture = require('./capture');
+
+// 导出模式：由主进程退出时 spawn 的子进程执行（见 before-quit），不建任何窗口
+if (process.argv.includes('--export')) {
+  const _idx = process.argv.indexOf('--export');
+  const _mainPid = parseInt(process.argv[_idx + 1], 10) || 0;
+  app.whenReady()
+    .then(() => require('./export').runExport({ mainPid: _mainPid }))
+    .catch((e) => {
+      try {
+        fs.appendFileSync(path.join(app.getPath('userData'), 'export-error.log'),
+          '[' + new Date().toISOString() + '] ' + (e && e.stack || String(e)) + '\n');
+      } catch (_) {}
+    })
+    .finally(() => app.quit());
+  return;
+}
 
 const DEFAULT_URL = 'https://huoying.qq.com/';
 const LOG_FILE = path.join(app.getPath('userData'), 'launcher.log');
 const CONFIG_FILE = path.join(app.getPath('userData'), 'config.json');
 const CURRENT_VERSION = app.getVersion();
+
+// 抓包开关：必须在 app ready 之前判定（net-log 需提前设置命令行开关）
+function readConfigSync() {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    }
+  } catch (e) {
+    // 忽略，使用默认
+  }
+  return {};
+}
+const EARLY_CONFIG = readConfigSync();
+const CAPTURE_ENABLED =
+  process.argv.includes('--capture-traffic') ||
+  process.env.NARUTO_CAPTURE === '1' ||
+  EARLY_CONFIG.captureEnabled === true;
 
 let launcherWindow = null;
 let gameWindows = [];
@@ -35,7 +69,8 @@ let config = {
   theme: 'light',
   lastSpeed: 1,
   diskCache: true,
-  flashChoice: 'bundled'
+  flashChoice: 'bundled',
+  captureEnabled: false
 };
 
 const ACCOUNTS_FILE = path.join(app.getPath('userData'), 'accounts.json');
@@ -915,6 +950,20 @@ app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity');
 // 磁盘缓存上限 1GB（1073741824 字节）
 app.commandLine.appendSwitch('disk-cache-size', '1073741824');
 
+// 流量抓包：net-log 记录网络栈全量事件（含 socket 层），用于判定协议类型
+if (CAPTURE_ENABLED) {
+  const capDir = path.join(app.getPath('userData'), 'captures');
+  try {
+    fs.mkdirSync(capDir, { recursive: true });
+  } catch (e) {
+    // 忽略
+  }
+  const capStamp = new Date().toISOString().replace(/[:.]/g, '-');
+  app.commandLine.appendSwitch('log-net-log', path.join(capDir, `netlog-${capStamp}.json`));
+  // IncludeSocketBytes 才能记录 socket 上实际收发的原始字节（原始 TCP 协议必需）
+  app.commandLine.appendSwitch('net-log-capture-mode', 'IncludeSocketBytes');
+}
+
 function createLauncherWindow() {
   const colors = getThemeColors();
   
@@ -1131,6 +1180,11 @@ function createLauncherWindow() {
         <option value="system">内置国内版 34.0.0.380</option>
       </select>
     </div>
+    <div class="flash-selector">
+      <label>抓包模式（每周导出用，切换后需重启）</label>
+      <input type="checkbox" id="captureChk" onchange="toggleCapture(this.checked)"
+             style="width:16px;height:16px;cursor:pointer;vertical-align:middle">
+    </div>
   </div>
   
   <script>
@@ -1150,6 +1204,10 @@ function createLauncherWindow() {
     
     function changeFlash(choice) {
       ipcRenderer.send('set-flash-choice', choice);
+    }
+    
+    function toggleCapture(on) {
+      ipcRenderer.send('set-capture', on);
     }
     
     function setTheme(theme) {
@@ -1227,6 +1285,11 @@ function createLauncherWindow() {
       const sel = document.getElementById('flashSelect');
       if (sel) sel.value = choice || 'bundled';
     });
+    
+    ipcRenderer.on('capture-state', (event, on) => {
+      const chk = document.getElementById('captureChk');
+      if (chk) chk.checked = !!on;
+    });
   </script>
 </body>
 </html>`;
@@ -1236,6 +1299,7 @@ function createLauncherWindow() {
   launcherWindow.webContents.on('did-finish-load', () => {
     launcherWindow.webContents.send('theme-changed', currentTheme);
     launcherWindow.webContents.send('flash-choice', config.flashChoice);
+    launcherWindow.webContents.send('capture-state', !!config.captureEnabled);
   });
 
   launcherWindow.on('close', (event) => {
@@ -2384,6 +2448,12 @@ app.whenReady().then(() => {
   initSpeedControl();
   initAutoUpdater();
 
+  // 初始化流量抓包层（关闭时零副作用）
+  capture.initCapture({ enabled: CAPTURE_ENABLED });
+  if (CAPTURE_ENABLED) {
+    log('[capture] 抓包已开启，输出目录: ' + capture.getCaptureDir());
+  }
+
   // 启动时延迟执行自动清理，避免同步 IO 阻塞主进程
   setTimeout(() => {
     if (gameWindows.length === 0) {
@@ -2428,6 +2498,24 @@ app.whenReady().then(() => {
     }
   });
   
+  // 抓包模式：写入 config，需重启生效（net-log 开关需在 app ready 前设置）
+  ipcMain.on('set-capture', async (event, on) => {
+    config.captureEnabled = !!on;
+    saveConfig();
+    log('[capture] 抓包模式已' + (on ? '开启' : '关闭'));
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      title: '抓包模式',
+      message: '已' + (on ? '开启' : '关闭') + '抓包模式，需要重启应用才能生效。',
+      buttons: ['立即重启', '稍后']
+    });
+    if (response === 0) {
+      isQuitting = true;      // 允许真正退出（否则被托盘逻辑拦下）
+      app.relaunch();
+      app.quit();
+    }
+  });
+
   // 标签节流：双开时冻结非活跃标签，资源全部给当前玩的标签
   ipcMain.on('set-tab-throttle', (event, data) => {
     try {
@@ -2462,6 +2550,15 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
+  // 抓包开启时，退出前拉起独立导出进程（等主进程退出、netlog 写完后自动生成 5 个 Excel）
+  if (capture.isCaptureEnabled()) {
+    try {
+      spawn(process.execPath, ['--export', String(process.pid)], { detached: true, stdio: 'ignore' }).unref();
+      log('[capture] 已启动导出子进程');
+    } catch (e) {
+      log('[capture] 启动导出子进程失败: ' + e.message, 'WARN');
+    }
+  }
   saveConfig();
   performExitCleanup();
 });
