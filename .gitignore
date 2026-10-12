@@ -43,3 +43,18 @@ app-update.yml
 # Cache
 .cache/
 npm-debug.log*
+__pycache__/
+*.pyc
+
+
+# 本地逆向分析产物（体积大，不进仓库）
+_swf_decomp/
+_swf/
+_swf_dl/
+_swf_strings/
+_tools/
+_cap_sockets/
+_pkg_item2/
+_excel/
+_guild.json
+_guild.csv
