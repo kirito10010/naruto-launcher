@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { overflow: hidden; background: #ffffff; }
+  body {
+    font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif;
+    color: #2c3e50;
+    height: 100vh;
+    padding: 24px 26px;
+    display: flex; flex-direction: column; justify-content: center;
+    user-select: none;
+  }
+  .title { font-size: 13.5px; color: #34495e; text-align: center; margin-bottom: 16px; }
+  .bar { height: 8px; background: #eef2f6; border-radius: 4px; overflow: hidden; }
+  .fill {
+    height: 100%; width: 0%; border-radius: 4px;
+    background: linear-gradient(90deg, #4a90d9, #357abd);
+    transition: width 0.25s ease;
+  }
+  .info {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-top: 10px; font-size: 12px; color: #7f8c8d;
+  }
+  .speed { color: #95a5a6; }
+</style>
+</head>
+<body>
+  <div class="title">正在下载更新…</div>
+  <div class="bar"><div class="fill" id="fill"></div></div>
+  <div class="info">
+    <span id="pct">0% (0MB / 0MB)</span>
+    <span class="speed" id="speed">0 MB/s</span>
+  </div>
+
+<script>
+  const { ipcRenderer } = require('electron');
+  ipcRenderer.on('update-progress', (e, d) => {
+    document.getElementById('fill').style.width = d.percent + '%';
+    document.getElementById('pct').textContent = d.percent + '% (' + d.downloaded + 'MB / ' + d.total + 'MB)';
+    document.getElementById('speed').textContent = d.speed + ' MB/s';
+  });
+</script>
+</body>
+</html>

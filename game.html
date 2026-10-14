@@ -5,17 +5,20 @@
   <title>火影忍者Online</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    /* 去掉 Chromium 默认焦点环（跟随系统强调色，会残留成黄框） */
+    button:focus, button:focus-visible { outline: none; }
     :root {
       --bg1: #ffffff;
-      --bg2: #f5f5f5;
-      --border: #e0e0e0;
-      --text: #333333;
+      --bg2: #f0fdfa;
+      --border: #d7ece8;
+      --text: #1e2a37;
+      --sub: #7c8794;
       --btnBg: #ffffff;
-      --btnHover: #f8f8f8;
-      --btnBorder: #dddddd;
-      --separator: #dddddd;
-      --accent: #3498db;
-      --toolbarHeight: 36px;
+      --btnHover: #f0fdfa;
+      --btnBorder: #cfe3df;
+      --separator: #dbe7e5;
+      --accent: #14b8a6;
+      --toolbarHeight: 44px;
     }
     body {
       background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
@@ -29,22 +32,44 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 8px;
+      padding: 0 8px 0 10px;
       height: var(--toolbarHeight);
       background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
       border-bottom: 1px solid var(--border);
       -webkit-app-region: drag;
       flex-shrink: 0;
+      position: relative;
+      z-index: 900;
     }
-    .toolbar-left { display: flex; align-items: center; gap: 4px; flex: 1; }
-    .toolbar-center { display: flex; align-items: center; gap: 8px; -webkit-app-region: no-drag; }
-    .toolbar-right { display: flex; align-items: center; gap: 8px; -webkit-app-region: no-drag; }
-    .title {
+    .tb-left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+    .tb-right { display: flex; align-items: center; gap: 6px; -webkit-app-region: no-drag; }
+    .ttl {
       color: var(--text);
-      font-size: 13px;
-      font-weight: 500;
-      margin-right: 8px;
+      font-size: 13.5px;
+      font-weight: 600;
+      white-space: nowrap;
     }
+    .tbtn {
+      height: 30px;
+      min-width: 30px;
+      padding: 0 9px;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text);
+      font-size: 14px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .15s, color .15s;
+      -webkit-app-region: no-drag;
+    }
+    .tbtn:hover { background: rgba(128,128,128,.16); }
+    .tbtn.active { background: var(--accent); color: #fff; }
+    body.fullscreen .toolbar { display: none; }
+    body.fullscreen .tab-sidebar { top: 0; height: 100vh; }
+    body.fullscreen .account-sidebar { top: 0; height: 100vh; }
     .tabs-container {
       display: none;
       align-items: center;
@@ -59,11 +84,11 @@
       overflow: hidden;
     }
     .tab {
-      height: 24px;
+      height: 28px;
       padding: 0 12px;
       border: 1px solid var(--btnBorder);
-      border-radius: 4px;
-      background: linear-gradient(var(--btnBg), var(--btnHover));
+      border-radius: 999px;
+      background: var(--btnBg);
       color: var(--text);
       font-size: 12px;
       cursor: pointer;
@@ -71,10 +96,11 @@
       align-items: center;
       gap: 6px;
       white-space: nowrap;
+      max-width: 160px;
       -webkit-app-region: no-drag;
     }
     .tab:hover {
-      background: linear-gradient(var(--btnHover), #e8e8e8);
+      background: var(--btnHover);
     }
     .tab.active {
       background: var(--accent);
@@ -93,11 +119,11 @@
       color: #fff;
     }
     .tab-add {
-      height: 24px;
-      width: 24px;
+      height: 28px;
+      width: 28px;
       border: 1px solid var(--btnBorder);
-      border-radius: 4px;
-      background: linear-gradient(var(--btnBg), var(--btnHover));
+      border-radius: 999px;
+      background: var(--btnBg);
       color: var(--text);
       font-size: 16px;
       cursor: pointer;
@@ -108,7 +134,7 @@
       -webkit-app-region: no-drag;
     }
     .tab-add:hover {
-      background: linear-gradient(var(--btnHover), #e8e8e8);
+      background: var(--btnHover);
     }
     .tab-sidebar {
       position: fixed;
@@ -201,91 +227,135 @@
     .tab-sidebar-item.active .tab-sidebar-close:hover {
       color: #fff;
     }
-    .btn {
-      height: 24px;
-      padding: 0 12px;
-      border: 1px solid var(--btnBorder);
-      border-radius: 4px;
-      background: linear-gradient(var(--btnBg), var(--btnHover));
-      color: var(--text);
-      font-size: 12px;
-      cursor: pointer;
-      outline: none;
-      font-family: 'Microsoft YaHei', sans-serif;
-      min-width: 40px;
-      transition: all .15s;
-      -webkit-app-region: no-drag;
-    }
-    .btn:hover {
-      background: linear-gradient(var(--btnHover), #e8e8e8);
-      border-color: #ccc;
-    }
-    .btn:active {
-      background: linear-gradient(#e8e8e8, #d8d8d8);
-    }
-    .btn.active {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
-    }
-    .separator {
-      width: 1px;
-      height: 18px;
-      background: var(--separator);
-    }
     .select-container {
       position: relative;
     }
     .select-container select {
-      height: 24px;
-      padding: 0 24px 0 8px;
+      height: 30px;
+      padding: 0 26px 0 10px;
       border: 1px solid var(--btnBorder);
-      border-radius: 4px;
+      border-radius: 8px;
       background: var(--btnBg);
       color: var(--text);
-      font-size: 12px;
+      font-size: 12.5px;
       cursor: pointer;
       outline: none;
       font-family: 'Microsoft YaHei', sans-serif;
-      min-width: 70px;
       appearance: none;
       -webkit-appearance: none;
     }
     .select-container::after {
       content: '▼';
       position: absolute;
-      right: 6px;
+      right: 9px;
       top: 50%;
       transform: translateY(-50%);
       font-size: 8px;
       color: var(--text);
       pointer-events: none;
     }
-    .window-controls {
-      display: flex;
-      gap: 4px;
+    .menu-popover {
+      position: absolute;
+      top: calc(var(--toolbarHeight) - 4px);
+      right: 96px;
+      min-width: 190px;
+      background: var(--bg1);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.16);
+      padding: 6px;
+      display: none;
+      z-index: 1000;
+      -webkit-app-region: no-drag;
     }
-    .control-btn {
-      width: 28px;
-      height: 24px;
+    .menu-popover.open { display: block; }
+    .menu-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      display: none;
+      -webkit-app-region: no-drag;
+    }
+    .menu-backdrop.open { display: block; }
+    .mi {
+      padding: 9px 12px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .mi:hover { background: rgba(128,128,128,.16); }
+    .mi-sep { height: 1px; background: var(--border); margin: 5px 8px; }
+    .win-ctrls {
+      display: flex;
+      gap: 2px;
+      margin-left: 4px;
+    }
+    .cbtn {
+      width: 34px;
+      height: 30px;
       border: none;
+      border-radius: 8px;
       background: transparent;
       color: var(--text);
-      font-size: 12px;
+      font-size: 13px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      -webkit-appearance: none;
-      appearance: none;
+      transition: background .15s, color .15s;
+      -webkit-app-region: no-drag;
     }
-    .control-btn:hover {
-      background: rgba(0,0,0,.05);
+    .cbtn:hover { background: rgba(128,128,128,.16); }
+    .cbtn.close:hover { background: #ef4444; color: #fff; }
+    .help-mask {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      -webkit-app-region: no-drag;
     }
-    .control-btn.close:hover {
-      background: #e74c3c;
-      color: #fff;
+    .help-card {
+      width: 460px;
+      max-width: 90vw;
+      max-height: 80vh;
+      overflow-y: auto;
+      background: var(--bg1);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.28);
+      padding: 18px 20px 20px;
+      color: var(--text);
     }
+    .help-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .help-close {
+      border: none;
+      background: transparent;
+      color: var(--text);
+      font-size: 14px;
+      cursor: pointer;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+    }
+    .help-close:hover { background: rgba(128,128,128,.16); }
+    .help-row {
+      font-size: 12.5px;
+      line-height: 1.7;
+      margin-bottom: 8px;
+    }
+    .help-row b { color: var(--accent); }
     .webview-wrap {
       flex: 1;
       min-height: 0;
@@ -314,8 +384,8 @@
       top: var(--toolbarHeight);
       width: 280px;
       height: calc(100vh - var(--toolbarHeight));
-      background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
-      border-left: 1px solid #4a4a6a;
+      background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+      border-left: 1px solid var(--border);
       transition: right 0.3s ease;
       z-index: 1000;
       display: flex;
@@ -328,11 +398,11 @@
       display: flex;
       align-items: center;
       padding: 12px 16px;
-      border-bottom: 1px solid #4a4a6a;
+      border-bottom: 1px solid var(--border);
       gap: 8px;
     }
     .account-sidebar-header h3 {
-      color: #fff;
+      color: var(--text);
       font-size: 14px;
       flex: 1;
       margin: 0;
@@ -340,33 +410,33 @@
     .account-sidebar-btn {
       padding: 6px 12px;
       border: none;
-      border-radius: 4px;
+      border-radius: 8px;
       cursor: pointer;
       font-size: 12px;
-      transition: all 0.2s;
+      transition: background 0.2s, filter 0.2s;
     }
     .account-sidebar-add {
-      background: #00d4ff;
-      color: #1a1a2e;
+      background: var(--accent);
+      color: #fff;
       font-weight: bold;
     }
     .account-sidebar-add:hover {
-      background: #00b8e6;
+      filter: brightness(1.08);
     }
     .account-sidebar-launch-all {
       background: #10b981;
       color: #fff;
     }
     .account-sidebar-launch-all:hover {
-      background: #059669;
+      filter: brightness(1.08);
     }
     .account-sidebar-close {
       background: transparent;
-      color: #aaa;
+      color: var(--sub);
       padding: 4px 8px;
     }
     .account-sidebar-close:hover {
-      color: #fff;
+      color: var(--text);
     }
     .account-sidebar-list {
       flex: 1;
@@ -378,29 +448,29 @@
       align-items: center;
       justify-content: space-between;
       padding: 10px 12px;
-      background: #2d2d44;
-      border-radius: 6px;
+      background: rgba(128,128,128,.10);
+      border-radius: 10px;
       margin-bottom: 6px;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: background 0.2s;
     }
     .account-sidebar-item:hover {
-      background: #3d3d5c;
+      background: rgba(128,128,128,.18);
     }
     .account-sidebar-info {
       flex: 1;
       min-width: 0;
     }
     .account-sidebar-win-name {
-      color: #00d4ff;
+      color: var(--accent);
       font-size: 13px;
-      font-weight: 500;
+      font-weight: 600;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
     .account-sidebar-qq {
-      color: #aaa;
+      color: var(--sub);
       font-size: 11px;
     }
     .account-sidebar-actions {
@@ -416,30 +486,30 @@
       width: 24px;
       height: 24px;
       border: none;
-      border-radius: 4px;
+      border-radius: 6px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 12px;
-      background: rgba(255,255,255,0.1);
-      color: #fff;
+      background: rgba(128,128,128,.18);
+      color: var(--text);
     }
     .account-sidebar-action-btn:hover {
-      background: rgba(255,255,255,0.2);
+      background: rgba(128,128,128,.30);
     }
     .account-sidebar-action-btn.open {
       color: #10b981;
     }
     .account-sidebar-action-btn.edit {
-      color: #ffd700;
+      color: #eab308;
     }
     .account-sidebar-action-btn.delete {
-      color: #e74c3c;
+      color: #ef4444;
     }
     .account-sidebar-hint {
       text-align: center;
-      color: #666;
+      color: var(--sub);
       font-size: 12px;
       padding: 20px;
     }
@@ -449,20 +519,23 @@
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(0,0,0,0.7);
+      background: rgba(0,0,0,0.45);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 2000;
     }
     .add-account-box {
-      background: #2d2d44;
-      border-radius: 12px;
+      background: var(--bg1);
+      border: 1px solid var(--border);
+      border-radius: 14px;
       padding: 24px;
       width: 320px;
+      color: var(--text);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.28);
     }
     .add-account-box h3 {
-      color: #fff;
+      color: var(--text);
       font-size: 16px;
       margin-bottom: 16px;
       text-align: center;
@@ -470,19 +543,19 @@
     .add-account-box input {
       width: 100%;
       padding: 10px 12px;
-      border: 1px solid #4a4a6a;
-      border-radius: 6px;
-      background: #1a1a2e;
-      color: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(128,128,128,.10);
+      color: var(--text);
       font-size: 13px;
       margin-bottom: 10px;
       outline: none;
     }
     .add-account-box input:focus {
-      border-color: #00d4ff;
+      border-color: var(--accent);
     }
     .add-account-box input::placeholder {
-      color: #666;
+      color: var(--sub);
     }
     .add-account-actions {
       display: flex;
@@ -493,64 +566,65 @@
       flex: 1;
       padding: 10px;
       border: none;
-      border-radius: 6px;
+      border-radius: 8px;
       cursor: pointer;
       font-size: 13px;
     }
     .btn-cancel {
-      background: #4a4a6a;
-      color: #fff;
+      background: rgba(128,128,128,.20);
+      color: var(--text);
     }
     .btn-cancel:hover {
-      background: #5a5a7a;
+      background: rgba(128,128,128,.30);
     }
     .btn-confirm {
-      background: #00d4ff;
-      color: #1a1a2e;
+      background: var(--accent);
+      color: #fff;
       font-weight: bold;
     }
     .btn-confirm:hover {
-      background: #00b8e6;
+      filter: brightness(1.08);
     }
   </style>
 </head>
 <body>
   <div class="toolbar">
-    <div class="toolbar-left">
-      <button class="btn" id="btn-tab-sidebar" title="展开/收起标签栏">≡</button>
-      <span class="title" id="windowTitle">火影忍者Online</span>
+    <div class="tb-left">
+      <button class="tbtn" id="btn-tab-sidebar" title="标签栏">&#9776;</button>
+      <span class="ttl" id="windowTitle">火影忍者Online</span>
       <div class="tabs-container" id="tabs-container">
         <div class="tabs-list" id="tabs-list"></div>
         <div class="tab-add" id="tab-add-h">+</div>
       </div>
     </div>
-    <div class="toolbar-center">
-      <button class="btn" id="btn-refresh" title="刷新页面（保留登录状态）">刷新</button>
-      <button class="btn" id="btn-tab-mode" title="切换标签显示方式：侧边栏 / 顶部任务栏">标签栏</button>
-      <div class="separator"></div>
-      <button class="btn" id="btn-accounts" title="账号管理">👤 账号</button>
-      <div class="separator"></div>
+    <div class="tb-right">
       <div class="select-container">
         <select id="speed-select">
-          <option value="1" selected>1x (还原)</option>
+          <option value="1" selected>1x 还原</option>
           <option value="2">2x</option>
           <option value="4">4x</option>
           <option value="6">6x</option>
           <option value="10">10x</option>
           <option value="20">20x</option>
-          <option value="0.5">0.5x (减速)</option>
+          <option value="0.5">0.5x 减速</option>
         </select>
       </div>
-      <div class="separator"></div>
-      <button class="btn" id="btn-mute" title="切换静音">🔊</button>
-      <div class="separator"></div>
-      <button class="btn" id="btn-stretch" title="切换显示模式：原生分辨率 / 跟随窗口拉伸">拉伸</button>
-    </div>
-    <div class="toolbar-right">
-      <div class="window-controls">
-        <button class="control-btn" id="btn-min">-</button>
-        <button class="control-btn" id="btn-max">□</button>
-        <button class="control-btn close" id="btn-close">×</button>
+      <button class="tbtn" id="btn-accounts" title="账号管理"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
+      <button class="tbtn" id="btn-more" title="更多">&#8943;</button>
+      <div class="menu-backdrop" id="moreBackdrop"></div>
+      <div class="menu-popover" id="moreMenu">
+        <div class="mi" data-act="refresh">刷新（保留登录状态）</div>
+        <div class="mi" data-act="tabmode" id="miTabMode">标签栏：侧边</div>
+        <div class="mi" data-act="mute" id="miMute">静音：关</div>
+        <div class="mi" data-act="stretch" id="miStretch">拉伸模式：关</div>
+        <div class="mi-sep"></div>
+        <div class="mi" data-act="help">操作说明</div>
+        <div class="mi" data-act="fullscreen">全屏（F11）</div>
+      </div>
+      <div class="win-ctrls">
+        <button class="cbtn" id="btn-min" title="最小化">&#8211;</button>
+        <button class="cbtn" id="btn-max" title="最大化">&#9744;</button>
+        <button class="cbtn close" id="btn-close" title="关闭">&#10005;</button>
       </div>
     </div>
   </div>
@@ -584,10 +658,13 @@
     const tabsContainer = document.getElementById('tabs-container');
     const tabsList = document.getElementById('tabs-list');
     const tabAddH = document.getElementById('tab-add-h');
-    const btnTabMode = document.getElementById('btn-tab-mode');
     const speedSelect = document.getElementById('speed-select');
-    const btnMute = document.getElementById('btn-mute');
-    const btnStretch = document.getElementById('btn-stretch');
+    const btnMore = document.getElementById('btn-more');
+    const moreMenu = document.getElementById('moreMenu');
+    const moreBackdrop = document.getElementById('moreBackdrop');
+    const miTabMode = document.getElementById('miTabMode');
+    const miMute = document.getElementById('miMute');
+    const miStretch = document.getElementById('miStretch');
 
     let tabs = [];
     let activeTabId = null;
@@ -806,7 +883,7 @@
 
     function setStretchMode(enabled) {
       stretchMode = enabled;
-      if (btnStretch) btnStretch.classList.toggle('active', enabled);
+      if (miStretch) miStretch.textContent = '拉伸模式' + (enabled ? '：开' : '：关');
       tabs.forEach(function(tab) {
         if (tab._webview) {
           applyStretchToWebview(tab._webview, enabled);
@@ -1114,7 +1191,7 @@
       tabsContainer.style.display = isTaskbar ? 'flex' : 'none';
       tabSidebar.classList.remove('visible');
       btnTabSidebar.style.display = isTaskbar ? 'none' : '';
-      if (btnTabMode) btnTabMode.classList.toggle('active', isTaskbar);
+      if (miTabMode) miTabMode.textContent = '标签栏：' + (isTaskbar ? '顶栏' : '侧边');
     }
 
     // 账号侧边栏
@@ -1259,14 +1336,6 @@
       if (tab) removeTab(tab.id);
     }
 
-    document.getElementById('btn-refresh').addEventListener('click', () => {
-      window.gameAPI.refreshPage();
-    });
-
-    btnTabMode.addEventListener('click', () => {
-      setTabDisplayMode(tabDisplayMode === 'sidebar' ? 'taskbar' : 'sidebar');
-    });
-
     tabAddH.addEventListener('click', () => {
       addTab();
     });
@@ -1289,9 +1358,13 @@
       window.gameAPI.setSpeed(currentSpeed);
     });
 
-    btnMute.addEventListener('click', () => {
+    function syncMuteLabel() {
+      if (miMute) miMute.textContent = isMuted ? '静音：已开' : '静音：关';
+    }
+
+    function toggleMute() {
       isMuted = !isMuted;
-      btnMute.textContent = isMuted ? '🔇' : '🔊';
+      syncMuteLabel();
 
       // 更新所有标签的静音状态
       tabs.forEach(tab => {
@@ -1301,11 +1374,7 @@
       });
 
       window.gameAPI.setConfig('muted', isMuted);
-    });
-
-    btnStretch.addEventListener('click', () => {
-      setStretchMode(!stretchMode);
-    });
+    }
 
     document.getElementById('btn-min').addEventListener('click', () => {
       window.gameAPI.minWindow();
@@ -1317,6 +1386,74 @@
 
     document.getElementById('btn-close').addEventListener('click', () => {
       window.gameAPI.closeWindow();
+    });
+
+    // 更多菜单
+    function openHelp() {
+      if (document.getElementById('helpModal')) return;
+      const mask = document.createElement('div');
+      mask.id = 'helpModal';
+      mask.className = 'help-mask';
+      mask.innerHTML =
+        '<div class="help-card">' +
+          '<div class="help-head"><span>操作说明</span><button class="help-close" id="helpClose">&#10005;</button></div>' +
+          '<div class="help-body">' +
+            '<div class="help-row"><b>账号管理</b>：点顶部 <b>&#128100;</b> 打开账号侧栏，可添加/编辑账号；点「一键启动」批量多开。</div>' +
+            '<div class="help-row"><b>变速</b>：顶部「变速」下拉，1x 还原，2x/4x/6x/10x/20x 加速，0.5x 减速。</div>' +
+            '<div class="help-row"><b>标签栏</b>：点 <b>&#9776;</b> 打开标签侧栏；「&#8943; → 标签栏」切换 侧边/顶栏 显示。</div>' +
+            '<div class="help-row"><b>刷新</b>：「&#8943; → 刷新」重新加载页面并保留登录状态。</div>' +
+            '<div class="help-row"><b>静音</b>：「&#8943; → 静音」一键静音全部标签。</div>' +
+            '<div class="help-row"><b>拉伸模式</b>：「&#8943; → 拉伸模式」在 原生分辨率 / 跟随窗口拉伸 间切换。</div>' +
+            '<div class="help-row"><b>全屏</b>：按 <b>F11</b> 或「&#8943; → 全屏」进入全屏（隐藏顶部栏），再按一次退出。</div>' +
+            '<div class="help-row"><b>多开</b>：每个标签独立登录，互不影响。</div>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(mask);
+      const close = () => { const el = document.getElementById('helpModal'); if (el) el.remove(); };
+      mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
+      mask.querySelector('#helpClose').addEventListener('click', close);
+    }
+
+    function closeMoreMenu() {
+      moreMenu.classList.remove('open');
+      moreBackdrop.classList.remove('open');
+    }
+
+    function openMoreMenu() {
+      moreMenu.classList.add('open');
+      moreBackdrop.classList.add('open');
+    }
+
+    btnMore.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (moreMenu.classList.contains('open')) {
+        closeMoreMenu();
+      } else {
+        openMoreMenu();
+      }
+    });
+
+    // 点击弹窗之外的任意位置关闭
+    moreBackdrop.addEventListener('click', closeMoreMenu);
+
+    moreMenu.addEventListener('click', (e) => {
+      const mi = e.target.closest('.mi');
+      if (!mi) return;
+      const act = mi.dataset.act;
+      closeMoreMenu();
+      if (act === 'refresh') {
+        window.gameAPI.refreshPage();
+      } else if (act === 'tabmode') {
+        setTabDisplayMode(tabDisplayMode === 'sidebar' ? 'taskbar' : 'sidebar');
+      } else if (act === 'mute') {
+        toggleMute();
+      } else if (act === 'stretch') {
+        setStretchMode(!stretchMode);
+      } else if (act === 'help') {
+        openHelp();
+      } else if (act === 'fullscreen') {
+        ipcRenderer.send('toggle-fullscreen');
+      }
     });
 
     // 账号按钮
@@ -1393,8 +1530,12 @@
     });
 
     ipcRenderer.on('mute-update', (event, muted) => {
-      isMuted = muted;
-      btnMute.textContent = isMuted ? '🔇' : '🔊';
+      isMuted = !!muted;
+      syncMuteLabel();
+    });
+
+    ipcRenderer.on('fullscreen-changed', (event, on) => {
+      document.body.classList.toggle('fullscreen', !!on);
     });
 
     ipcRenderer.on('game-info', (event, data) => {
@@ -1460,58 +1601,80 @@
     // 主题应用
     function applyTheme(theme) {
       const themes = {
-        light: {
+        mint: {
           bg1: '#ffffff',
-          bg2: '#f5f5f5',
-          border: '#e0e0e0',
-          text: '#333333',
+          bg2: '#f0fdfa',
+          border: '#d7ece8',
+          text: '#1e2a37',
+          sub: '#7c8794',
           btnBg: '#ffffff',
-          btnHover: '#f8f8f8',
-          btnBorder: '#dddddd',
-          separator: '#dddddd',
-          accent: '#3498db'
+          btnHover: '#f0fdfa',
+          btnBorder: '#cfe3df',
+          separator: '#dbe7e5',
+          accent: '#14b8a6'
         },
-        dark: {
-          bg1: '#1a1a2e',
-          bg2: '#16213e',
-          border: '#4a4a6a',
-          text: '#ffffff',
-          btnBg: '#2d2d44',
-          btnHover: '#3d3d5c',
-          btnBorder: '#5a5a7a',
-          separator: '#4a4a6a',
-          accent: '#00d4ff'
+        sky: {
+          bg1: '#ffffff',
+          bg2: '#eff6ff',
+          border: '#d7e6fb',
+          text: '#1e2a3a',
+          sub: '#7d8899',
+          btnBg: '#ffffff',
+          btnHover: '#eff6ff',
+          btnBorder: '#cfe0f7',
+          separator: '#dbe7f7',
+          accent: '#3b82f6'
         },
-        blue: {
-          bg1: '#0f3460',
-          bg2: '#16213e',
-          border: '#1e4d7b',
-          text: '#eaeaea',
-          btnBg: '#1a4a7a',
-          btnHover: '#2a5a8a',
-          btnBorder: '#2e6a9a',
-          separator: '#1e4d7b',
-          accent: '#4ecdc4'
+        sakura: {
+          bg1: '#ffffff',
+          bg2: '#fff1f7',
+          border: '#f7d7e6',
+          text: '#3a1e2a',
+          sub: '#997d8a',
+          btnBg: '#ffffff',
+          btnHover: '#fff1f7',
+          btnBorder: '#f0cfe0',
+          separator: '#f3dbe8',
+          accent: '#ec4899'
         },
-        orange: {
-          bg1: '#2d2d2d',
-          bg2: '#1a1a1a',
-          border: '#5a4a3a',
-          text: '#ffddaa',
-          btnBg: '#4a3a2a',
-          btnHover: '#5a4a3a',
-          btnBorder: '#6a5a4a',
-          separator: '#5a4a3a',
-          accent: '#ff6b35'
+        amber: {
+          bg1: '#ffffff',
+          bg2: '#fff7ed',
+          border: '#f7e0c8',
+          text: '#3a2a1e',
+          sub: '#9a8a7d',
+          btnBg: '#ffffff',
+          btnHover: '#fff7ed',
+          btnBorder: '#f0d7bd',
+          separator: '#f3e2d0',
+          accent: '#f97316'
+        },
+        night: {
+          bg1: '#1b2430',
+          bg2: '#161b22',
+          border: '#2a3442',
+          text: '#e6edf3',
+          sub: '#8b97a6',
+          btnBg: '#222c38',
+          btnHover: '#2a3442',
+          btnBorder: '#33404f',
+          separator: '#2a3442',
+          accent: '#2dd4bf'
         }
       };
+      // 旧主题 key 兼容
+      themes.light = themes.mint;
+      themes.blue = themes.sky;
+      themes.orange = themes.amber;
+      themes.dark = themes.night;
 
-      const t = themes[theme] || themes.light;
+      const t = themes[theme] || themes.mint;
       const root = document.documentElement;
       root.style.setProperty('--bg1', t.bg1);
       root.style.setProperty('--bg2', t.bg2);
       root.style.setProperty('--border', t.border);
       root.style.setProperty('--text', t.text);
+      root.style.setProperty('--sub', t.sub);
       root.style.setProperty('--btnBg', t.btnBg);
       root.style.setProperty('--btnHover', t.btnHover);
       root.style.setProperty('--btnBorder', t.btnBorder);

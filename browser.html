@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>4399小游戏</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  /* 去掉 Chromium 默认焦点环（跟随系统强调色，会残留成黄框） */
+  button:focus, button:focus-visible { outline: none; }
+  :root {
+    --bg1:#ffffff; --bg2:#f0fdfa; --border:#d7ece8; --text:#1e2a37; --accent:#14b8a6;
+    --h:44px;
+  }
+  html, body { height:100%; overflow:hidden; }
+  body {
+    display:flex; flex-direction:column;
+    font-family:'Microsoft YaHei', sans-serif; color:var(--text);
+  }
+  .bar {
+    height:var(--h); flex:0 0 var(--h);
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 6px 0 14px;
+    background:linear-gradient(180deg, var(--bg1), var(--bg2));
+    border-bottom:1px solid var(--border);
+    -webkit-app-region:drag; user-select:none;
+  }
+  .bar .ttl { font-size:13.5px; font-weight:600; }
+  .ctrls { display:flex; gap:2px; -webkit-app-region:no-drag; }
+  .cbtn {
+    width:34px; height:30px; border:none; border-radius:8px; background:transparent;
+    color:var(--text); font-size:13px; cursor:pointer; transition:background .15s, color .15s;
+  }
+  .cbtn:hover { background:rgba(0,0,0,.06); }
+  .cbtn.close:hover { background:#ef4444; color:#fff; }
+  .wrap { flex:1; min-height:0; position:relative; }
+  webview { position:absolute; top:0; left:0; width:100%; height:100%; background:#fff; }
+  body.fullscreen .bar { display:none; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <span class="ttl" id="ttl">4399小游戏</span>
+    <div class="ctrls">
+      <button class="cbtn" id="btnMin" title="最小化">&#8211;</button>
+      <button class="cbtn" id="btnMax" title="最大化">&#9744;</button>
+      <button class="cbtn close" id="btnClose" title="关闭">&#10005;</button>
+    </div>
+  </div>
+  <div class="wrap" id="wrap"></div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    const THEMES = {
+      mint:   { bg1:'#ffffff', bg2:'#f0fdfa', border:'#d7ece8', text:'#1e2a37', accent:'#14b8a6' },
+      sky:    { bg1:'#ffffff', bg2:'#eff6ff', border:'#d7e6fb', text:'#1e2a3a', accent:'#3b82f6' },
+      sakura: { bg1:'#ffffff', bg2:'#fff1f7', border:'#f7d7e6', text:'#3a1e2a', accent:'#ec4899' },
+      amber:  { bg1:'#ffffff', bg2:'#fff7ed', border:'#f7e0c8', text:'#3a2a1e', accent:'#f97316' },
+      night:  { bg1:'#1b2430', bg2:'#161b22', border:'#2a3442', text:'#e6edf3', accent:'#2dd4bf' }
+    };
+
+    function applyTheme(t) {
+      const th = THEMES[t] || THEMES.mint;
+      const r = document.documentElement.style;
+      r.setProperty('--bg1', th.bg1);
+      r.setProperty('--bg2', th.bg2);
+      r.setProperty('--border', th.border);
+      r.setProperty('--text', th.text);
+      r.setProperty('--accent', th.accent);
+    }
+
+    document.getElementById('btnMin').onclick = function () { ipcRenderer.send('min-window'); };
+    document.getElementById('btnMax').onclick = function () { ipcRenderer.send('max-window'); };
+    document.getElementById('btnClose').onclick = function () { ipcRenderer.send('close-window'); };
+
+    ipcRenderer.on('game-info', function (e, data) {
+      document.getElementById('ttl').textContent = (data.game && data.game.name) || '4399小游戏';
+      const url = (data.game && data.game.url) || 'https://www.4399.com/';
+
+      const wv = document.createElement('webview');
+      wv.src = url;
+      wv.setAttribute('plugins', '');
+      wv.setAttribute('webpreferences', 'allowRunningInsecureContent=yes,webSecurity=no,nativeWindowOpen=no,backgroundThrottling=no');
+
+      // 阻止弹窗，在当前 webview 内打开
+      wv.addEventListener('new-window', function (ev) {
+        ev.preventDefault();
+        if (ev.url) wv.loadURL(ev.url);
+      });
+
+      document.getElementById('wrap').appendChild(wv);
+    });
+
+    ipcRenderer.on('theme-update', function (e, t) { applyTheme(t); });
+    ipcRenderer.on('fullscreen-changed', function (e, on) {
+      document.body.classList.toggle('fullscreen', !!on);
+    });
+  </script>
+</body>
+</html>
