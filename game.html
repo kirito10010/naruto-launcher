@@ -373,6 +373,7 @@
     .webview-wrap webview.hidden {
       z-index: 0;
       pointer-events: none;
+      visibility: hidden;   /* 让合成器跳过该层（布局与尺寸不变，不影响切回） */
     }
     .webview-wrap webview.paused {
       z-index: 0;
@@ -671,6 +672,7 @@
     let accounts = [];
     let currentGame = null;
     let diskCache = true;
+    let windowSlot = 1;   // 由主进程 game-info 下发：本窗口的会话槽位（避免多窗口共用同一 partition）
     let isMuted = false;
     let tabCounter = 0;
     let currentSpeed = 1;
@@ -744,22 +746,18 @@
       setSpeed: function(speed) {
         ipcRenderer.send('set-game-speed', speed);
       },
-      // 刷新页面
+      // 刷新当前标签（只影响本标签，不再全局杀 Flash 插件进程）
       refreshPage: function() {
         var tab = tabs.find(function(t) { return t.id === activeTabId; });
-        if (tab && tab._webview) {
-          tab._manualRefresh = true;
-          ipcRenderer.send('refresh-page');
-          // 兜底：2.5 秒后若插件崩溃事件未触发自动重载，则强制冷加载
-          setTimeout(function() {
-            if (tab && tab._webview && tab._manualRefresh) {
-              tab._manualRefresh = false;
-              try { tab._webview.reloadIgnoringCache(); } catch (e) {
-                try { tab._webview.reload(); } catch (e2) {}
-              }
-            }
-          }, 2500);
+        if (!tab || !tab._webview) return;
+        tab._manualRefresh = true;
+        try {
+          tab._webview.reloadIgnoringCache();
+        } catch (e) {
+          try { tab._webview.reload(); } catch (e2) {}
         }
+        // 守卫期内忽略 plugin-crashed 的自动重载，避免双重 reload
+        setTimeout(function() { tab._manualRefresh = false; }, 4000);
       },
       // 关闭窗口
       closeWindow: function() {
@@ -812,11 +810,34 @@
              /qlogin\.qq\.com/i.test(url);
     }
 
+    // 会话分区（决定 Cookie / localStorage → 登录态）：
+    //  - 不落盘：内存分区，天然互不影响
+    //  - 已知账号（从账号管理启动）：按 QQ 固定，换窗口/重启都认同一个账号
+    //  - 手动登录：窗口槽位 * 100 + 标签槽位，保证多窗口之间不撞车
+    //    （窗口1 → game-1, game-2…；窗口2 → game-101, game-102…）
+    function computePartition(tab, account) {
+      if (!diskCache) return 'tab-' + tab.id;
+      const acc = account || tab._pendingAccount;
+      if (acc && acc.qq) return 'persist:qq-' + acc.qq;
+      return 'persist:game-' + (((windowSlot - 1) * 100) + (tab._tabSlot || tab.index));
+    }
+
+    // 分区在标签创建时定好（存 tab._partition），之后不再随重新编号变化
     function getPartition(tab) {
-      // diskCache 开启时用持久化分区（稳定索引命名，磁盘缓存+登录态可跨启动保留）
-      // 否则用普通内存分区
-      if (diskCache) return 'persist:game-' + tab.index;
-      return 'tab-' + tab.id;
+      return tab._partition || computePartition(tab);
+    }
+
+    // 标签槽位：取当前最小的空闲槽位，关标签时释放。
+    // 用「空闲槽位」而不是 tab.index，避免关掉标签后重新编号导致新标签与存活标签撞分区。
+    const usedTabSlots = {};
+    function allocTabSlot() {
+      let n = 1;
+      while (usedTabSlots[n]) n++;
+      usedTabSlots[n] = true;
+      return n;
+    }
+    function freeTabSlot(n) {
+      if (n) delete usedTabSlots[n];
     }
 
     // ===== 拉伸模式（原生分辨率 / 跟随窗口拉伸）=====
@@ -844,12 +865,21 @@
       '    el.style.transformOrigin = "0 0";',
       '    el.style.transform = "scale(" + sx + "," + sy + ")";',
       '  }',
+      '  function schedule() {',
+      '    if (window.__narutoStretchRaf) return;',
+      '    window.__narutoStretchRaf = requestAnimationFrame(function () {',
+      '      window.__narutoStretchRaf = null;',
+      '      doStretch();',
+      '    });',
+      '  }',
       '  if (!window.__narutoDoStretch) {',
       '    window.__narutoDoStretch = doStretch;',
-      '    window.addEventListener("resize", doStretch);',
-      '    window.__narutoStretchTimer = setInterval(doStretch, 1000);',
+      '    window.__narutoStretchSchedule = schedule;',
+      '    window.addEventListener("resize", schedule);',
       '  }',
       '  doStretch();',
+      // 只补跑有限次，覆盖 embed 晚出现的情况；不再每秒轮询（避免每秒强制 reflow）
+      '  [300, 1000, 2500, 5000].forEach(function (d) { setTimeout(doStretch, d); });',
       '})();'
     ].join('\n');
 
@@ -864,12 +894,14 @@
       '    el.style.zIndex = "";',
       '    el.style.transformOrigin = "";',
       '    el.style.transform = "";',
+      '    el.__narutoLastScale = null;',
       '  }',
-      '  if (window.__narutoStretchTimer) { clearInterval(window.__narutoStretchTimer); window.__narutoStretchTimer = null; }',
-      '  if (window.__narutoDoStretch) {',
-      '    window.removeEventListener("resize", window.__narutoDoStretch);',
-      '    window.__narutoDoStretch = null;',
+      '  if (window.__narutoStretchRaf) { cancelAnimationFrame(window.__narutoStretchRaf); window.__narutoStretchRaf = null; }',
+      '  if (window.__narutoStretchSchedule) {',
+      '    window.removeEventListener("resize", window.__narutoStretchSchedule);',
+      '    window.__narutoStretchSchedule = null;',
       '  }',
+      '  window.__narutoDoStretch = null;',
       '})();'
     ].join('\n');
 
@@ -887,6 +919,8 @@
       tabs.forEach(function(tab) {
         if (tab._webview) {
           applyStretchToWebview(tab._webview, enabled);
+          // wmode 取值依赖 stretchMode，切换拉伸后必须重刷画质
+          applyFlashQuality(tab._webview, tab.id === activeTabId ? 'high' : 'low');
         }
       });
       try { window.gameAPI.setConfig('stretchMode', enabled); } catch (e) {}
@@ -895,16 +929,12 @@
     // 后台标签画质降级 + wmode
     function applyFlashQuality(webview, quality) {
       if (!webview) return;
-      let js;
-      if (quality === 'low') {
-        // 后台/隐藏标签：需要 opaque 参与 z-index 分层
-        js = '(function(){ var els = document.querySelectorAll("embed, object"); for (var i=0;i<els.length;i++){ try { els[i].setAttribute("quality", "low"); els[i].setAttribute("wmode", "opaque"); } catch(e){} } })();';
-      } else {
-        // 激活标签：画质最低 + 强制 wmode=direct（GPU 直连），获得最佳流畅度
-        js = '(function(){ var els = document.querySelectorAll("embed, object"); for (var i=0;i<els.length;i++){ try { els[i].setAttribute("quality", "low"); els[i].setAttribute("wmode", "direct"); } catch(e){} } })();';
-      }
+      // 拉伸模式用 CSS transform 缩放 → 插件必须走合成器(opaque)，否则与 wmode=direct 冲突；
+      // 非拉伸时激活标签用 direct（插件直绘，最快），后台/隐藏标签用 opaque
+      const wmode = (stretchMode || quality === 'low') ? 'opaque' : 'direct';
+      const js = '(function(){ var els = document.querySelectorAll("embed, object"); for (var i=0;i<els.length;i++){ try { els[i].setAttribute("quality", "low"); els[i].setAttribute("wmode", "' + wmode + '"); } catch(e){} } })();';
       try {
-        webview.executeJavaScript(js).catch(function() {});
+        webview.executeJavaScript(js).catch(function () {});
       } catch (e) {}
     }
 
@@ -1090,6 +1120,9 @@
       };
 
       tabs.push(tab);
+      // 槽位 + 分区名都在创建时确定一次，之后 removeTab 的重新编号不再影响它们
+      tab._tabSlot = allocTabSlot();
+      tab._partition = computePartition(tab, account);
       createWebview(tab);
       switchTab(tab.id);
       renderTabs();
@@ -1111,9 +1144,19 @@
         tab._injectTimer = null;
       }
 
-      // 移除 webview
-      if (tab._webview && tab._webview.parentNode) {
-        tab._webview.parentNode.removeChild(tab._webview);
+      // 释放槽位，供后续新建标签复用（不会与存活标签撞分区）
+      freeTabSlot(tab._tabSlot);
+      tab._tabSlot = null;
+
+      // 移除 webview：先显式停掉并清监听，促使 guest 与 Flash 插件进程及时回收
+      if (tab._webview) {
+        try { tab._webview.stop(); } catch (e) {}
+        try { tab._webview.removeAllListeners(); } catch (e) {}
+        try { tab._webview.src = 'about:blank'; } catch (e) {}
+        if (tab._webview.parentNode) {
+          tab._webview.parentNode.removeChild(tab._webview);
+        }
+        tab._webview = null;
       }
 
       tabs.splice(idx, 1);
@@ -1540,6 +1583,7 @@
 
     ipcRenderer.on('game-info', (event, data) => {
       diskCache = (data.diskCache !== false);
+      windowSlot = data.windowSlot || 1;
       currentGame = data.game;
       accounts = data.accounts || [];
 
@@ -1561,6 +1605,8 @@
           tab._webview.classList.add('paused');
         }
         if (tab.id !== activeTabId) setTabThrottle(tab, true);
+        // 窗口失焦：整窗降画质（只降画质，不停逻辑，不影响挂机）
+        applyFlashQuality(tab._webview, 'low');
       });
     });
 
@@ -1571,6 +1617,8 @@
           tab._webview.classList.remove('paused');
         }
         setTabThrottle(tab, tab.id !== activeTabId);
+        // 窗口重新聚焦：活跃标签恢复高画质，其余保持低画质
+        applyFlashQuality(tab._webview, tab.id === activeTabId ? 'high' : 'low');
       });
     });
 

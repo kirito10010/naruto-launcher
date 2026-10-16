@@ -78,9 +78,11 @@ function attach(wc) {
   try {
     wc.debugger.attach('1.3');
     wc.debugger.sendCommand('Network.enable', {
-      maxTotalBufferSize: 100 * 1024 * 1024,
-      maxResourceBufferSize: 50 * 1024 * 1024,
-      maxPostDataSize: 10 * 1024 * 1024
+      // 缓冲调小：这些缓冲是"每 webContents"占用的，原值(100/50/10MB)在多开时内存开销过大。
+      // 导出依赖的是 net-log 文件（不是这里的 JSONL），缩小缓冲不影响导出结果。
+      maxTotalBufferSize: 16 * 1024 * 1024,
+      maxResourceBufferSize: 8 * 1024 * 1024,
+      maxPostDataSize: 2 * 1024 * 1024
     });
     wc.debugger.sendCommand('Page.enable');
   } catch (e) {

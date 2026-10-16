@@ -18,7 +18,28 @@ if (process.argv.includes('--export')) {
           '[' + new Date().toISOString() + '] ' + (e && e.stack || String(e)) + '\n');
       } catch (_) {}
     })
-    .finally(() => app.quit());
+    // 注意：不能用 app.quit()/app.exit()。等待过程里用过 setTimeout，
+    // 走 Electron 的退出流程会在 teardown 阶段崩溃（0xC0000005）；process.exit 直接退出。
+    // 延迟 200ms 是为了让 shell.openPath 的打开请求先派发出去。
+    .finally(() => setTimeout(() => process.exit(0), 200));
+  return;
+}
+
+// [全量抓包] 全量抓包导出：由主进程退出时 spawn 的子进程执行（见 before-quit），不建任何窗口
+// 与组织统计导出（--export）完全独立；删除本功能时连同 capture-dump.js 一起删掉即可
+if (process.argv.includes('--dump-capture')) {
+  const _dIdx = process.argv.indexOf('--dump-capture');
+  const _dPid = parseInt(process.argv[_dIdx + 1], 10) || 0;
+  app.whenReady()
+    .then(() => require('./capture-dump').runDump({ mainPid: _dPid }))
+    .catch((e) => {
+      try {
+        fs.appendFileSync(path.join(app.getPath('userData'), 'capture-dump-error.log'),
+          '[' + new Date().toISOString() + '] ' + (e && e.stack || String(e)) + '\n');
+      } catch (_) {}
+    })
+    // 同 --export：避免 Electron 退出流程在 teardown 阶段崩溃
+    .finally(() => setTimeout(() => process.exit(0), 200));
   return;
 }
 
@@ -30,12 +51,8 @@ if (!gotSingleInstanceLock) {
   return;
 }
 app.on('second-instance', () => {
-  // 重复启动时，把已有窗口唤到前台
-  if (launcherWindow && !launcherWindow.isDestroyed()) {
-    if (launcherWindow.isMinimized()) launcherWindow.restore();
-    launcherWindow.show();
-    launcherWindow.focus();
-  }
+  // 重复启动时，把已有窗口唤到前台（启动器已关闭则重建）
+  showLauncherWindow();
 });
 
 const DEFAULT_URL = 'https://huoying.qq.com/';
@@ -161,14 +178,24 @@ function readConfigSync() {
   return {};
 }
 const EARLY_CONFIG = readConfigSync();
-const CAPTURE_ENABLED =
-  process.argv.includes('--capture-traffic') ||
-  process.env.NARUTO_CAPTURE === '1' ||
-  EARLY_CONFIG.captureEnabled === true;
+
+// 抓包模式：off（关闭）/ stats（组织统计 → 生成 Excel）/ full（全量抓包 → 导出原始文件）
+function normalizeCaptureMode(v) {
+  if (v === 'off' || v === 'stats' || v === 'full') return v;
+  return v === true ? 'stats' : 'off';   // 兼容老的 captureEnabled: true
+}
+const CAPTURE_MODE =
+  process.argv.includes('--capture-full') ? 'full' :
+  (process.argv.includes('--capture-traffic') || process.env.NARUTO_CAPTURE === '1') ? 'stats' :
+  normalizeCaptureMode(
+    EARLY_CONFIG.captureMode !== undefined ? EARLY_CONFIG.captureMode : EARLY_CONFIG.captureEnabled
+  );
 
 let launcherWindow = null;
 let gameWindows = [];
 let gameWindowCount = 0;
+// 窗口槽位：本次运行内按窗口创建顺序单调递增（1 起），用于生成互不冲突的会话分区名
+let gameWindowSlotCounter = 0;
 let tray = null;
 let isQuitting = false;
 
@@ -191,8 +218,11 @@ let config = {
   theme: 'mint',
   lastSpeed: 1,
   diskCache: true,
-  flashChoice: 'bundled',
-  captureEnabled: false
+  flashChoice: 'system',
+  captureEnabled: false,
+  captureMode: 'off',   // off / stats（组织统计→Excel） / full（全量抓包→原始文件）
+  forceGpu: true,     // 强制启用 GPU（无视驱动黑名单），默认保持原行为
+  perfDiag: false     // 性能诊断日志（每 60s 记录一次进程/内存）
 };
 
 const ACCOUNTS_FILE = path.join(app.getPath('userData'), 'accounts.json');
@@ -379,7 +409,7 @@ function loadConfig() {
       currentTheme = normalizeTheme(config.theme);
       currentSpeedRate = config.lastSpeed || 1;
       if (config.diskCache === undefined) config.diskCache = true;
-      if (config.flashChoice === undefined) config.flashChoice = 'bundled';
+      if (config.flashChoice === undefined) config.flashChoice = 'system';
       log('配置已加载: theme=' + currentTheme + ', lastSpeed=' + currentSpeedRate);
     } else {
       log('配置文件不存在，使用默认配置');
@@ -428,19 +458,20 @@ function getFlashPath() {
   const arch = process.arch === 'x64' ? '64' : '32';
   const sysDir = process.arch === 'x64' ? 'System32' : 'SysWOW64';
 
-  // 读取 Flash 选择（内置国际版 / 内置国内版），此函数在 config 加载前执行，故直接读文件
-  let flashChoice = 'bundled';
+  // 读取 Flash 选择（内置国内版 / 内置国际版），此函数在 config 加载前执行，故直接读文件
+  // 默认 = 国内版 34.0.0.376（纯净版）
+  let flashChoice = 'system';
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-      flashChoice = cfg.flashChoice || 'bundled';
+      flashChoice = cfg.flashChoice || 'system';
     }
   } catch (e) {}
 
   const bundled32 = getResourcePath('flash', `pepflashplayer${arch}_32_0_0_344.dll`);
-  const bundled34 = getResourcePath('flash', `pepflashplayer${arch}_34_0_0_380.dll`);
+  const bundled34 = getResourcePath('flash', `pepflashplayer${arch}_34_0_0_376.dll`);
   const system32 = `C:\\Windows\\${sysDir}\\Macromed\\Flash\\pepflashplayer${arch}_32_0_0_344.dll`;
-  const system34 = `C:\\Windows\\${sysDir}\\Macromed\\Flash\\pepflashplayer${arch}_34_0_0_380.dll`;
+  const system34 = `C:\\Windows\\${sysDir}\\Macromed\\Flash\\pepflashplayer${arch}_34_0_0_376.dll`;
   const generic = getResourcePath('flash', 'pepflashplayer.dll');
   const devFlash = path.join(__dirname, 'flash', 'pepflashplayer.dll');
 
@@ -589,9 +620,9 @@ function cleanupLogFile() {
  */
 function cleanupElectronCache() {
   const userDataPath = app.getPath('userData');
+  // 注意：不清理 GPUCache / Code Cache —— 删掉会丢失 GPU 着色器缓存与 V8 字节码缓存，
+  // 之后需要重新编译，反而让启动与开局前几分钟更吃 CPU。
   const cacheDirs = [
-    'GPUCache',
-    'Code Cache',
     'blob_storage',
     'Session Storage',
     'Service Worker',
@@ -704,13 +735,24 @@ function cleanupLocalStorage() {
 function performStartupCleanup() {
   log('开始启动清理...', 'INFO');
 
-  cleanupLogFile();
-  cleanupElectronCache();
-  cleanupUnusedSessions();
-  cleanupUpdateTempFiles();
-  cleanupLocalStorage();
-
-  log('启动清理完成', 'INFO');
+  // 分步执行，每步之间让出事件循环，避免长时间独占主进程造成卡顿
+  const steps = [
+    cleanupLogFile,
+    cleanupElectronCache,
+    cleanupUnusedSessions,
+    cleanupUpdateTempFiles,
+    cleanupLocalStorage
+  ];
+  let i = 0;
+  const next = () => {
+    if (i >= steps.length) {
+      log('启动清理完成', 'INFO');
+      return;
+    }
+    try { steps[i++](); } catch (e) {}
+    setTimeout(next, 50);
+  };
+  next();
 }
 
 /**
@@ -942,6 +984,12 @@ let lastInjectTime = 0;
 const INJECT_COOLDOWN = 5000;
 
 async function injectAllChildProcesses() {
+  // 1x（还原）时无需注入：hook 常驻每个渲染/插件进程也会带来额外开销。
+  // 之后用户把倍率改成非 1 时，setSpeedRate 会重新调用本函数完成注入。
+  if (Math.abs(currentSpeedRate - 1) < 1e-6) {
+    return;
+  }
+
   const now = Date.now();
   if (now - lastInjectTime < INJECT_COOLDOWN) {
     return;
@@ -983,12 +1031,12 @@ async function secondPass() {
 const FLASH_PATH = getFlashPath();
 
 function detectFlashVersion(flashPath) {
-  if (!flashPath) return '34.0.0.380';
+  if (!flashPath) return '34.0.0.376';
   const match = flashPath.match(/(\d+_\d+_\d+_\d+)/);
   if (match) {
     return match[1].replace(/_/g, '.');
   }
-  return '34.0.0.380';
+  return '34.0.0.376';
 }
 
 const FLASH_VERSION = detectFlashVersion(FLASH_PATH);
@@ -1006,7 +1054,10 @@ app.commandLine.appendSwitch('ppapi-flash-Allow-Windows-Sandbox', 'true');
 
 app.commandLine.appendSwitch('allow-running-insecure-content');
 app.commandLine.appendSwitch('ignore-certificate-errors');
-app.commandLine.appendSwitch('ignore-gpu-blacklist');
+// 强制启用 GPU（无视驱动黑名单）：默认开启以保持原有行为，可在「设置」里关闭
+if (EARLY_CONFIG.forceGpu !== false) {
+  app.commandLine.appendSwitch('ignore-gpu-blacklist');
+}
 app.commandLine.appendSwitch('no-sandbox');
 
 // 性能：禁止后台节流（保证多开时后台游戏照常运行）
@@ -1017,7 +1068,6 @@ app.commandLine.appendSwitch('disable-backgrounding');
 //     这两个会让合成器不锁帧、不等垂直同步，CPU/GPU 持续满转 → 发热降频 → 越玩越卡
 
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
-app.commandLine.appendSwitch('enable-fast-startup');
 app.commandLine.appendSwitch('high-dpi-support', '1');
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
 app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity');
@@ -1025,8 +1075,9 @@ app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity');
 // 磁盘缓存上限 1GB（1073741824 字节）
 app.commandLine.appendSwitch('disk-cache-size', '1073741824');
 
-// 流量抓包：net-log 记录网络栈全量事件（含 socket 层），用于判定协议类型
-if (CAPTURE_ENABLED) {
+// 流量抓包：net-log 记录网络栈全量事件（含 socket 层）
+// 两种抓包模式（stats / full）都需要它，所以这里是共用部分
+if (CAPTURE_MODE !== 'off') {
   const capDir = path.join(app.getPath('userData'), 'captures');
   try {
     fs.mkdirSync(capDir, { recursive: true });
@@ -1198,7 +1249,27 @@ function createLauncherWindow() {
     font-size:14px; cursor:pointer; width:28px; height:28px; border-radius:8px;
   }
   .sheet-close:hover { background:var(--hover); color:var(--text); }
-  .sheet-body { max-height:62vh; overflow-y:auto; }
+  .sheet-body {
+    max-height:62vh;
+    overflow-y:auto;
+    padding-right:4px;
+    scrollbar-width:thin;
+  }
+  /* 细窄、圆角、半透明的滚动条（默认的系统滚动条太丑） */
+  .sheet-body::-webkit-scrollbar { width:8px; height:8px; }
+  .sheet-body::-webkit-scrollbar-track { background:transparent; }
+  .sheet-body::-webkit-scrollbar-thumb {
+    background:rgba(128,128,128,.30);
+    border:2px solid transparent;
+    background-clip:padding-box;
+    border-radius:8px;
+  }
+  .sheet-body::-webkit-scrollbar-thumb:hover {
+    background:rgba(128,128,128,.55);
+    background-clip:padding-box;
+  }
+  .sheet-body::-webkit-scrollbar-button { display:none; width:0; height:0; }
+  .sheet-body::-webkit-scrollbar-corner { background:transparent; }
   .sec-title { font-size:11.5px; color:var(--sub); margin:12px 0 8px; font-weight:600; }
   .theme-grid { display:flex; gap:10px; }
   .theme-card {
@@ -1291,20 +1362,36 @@ function createLauncherWindow() {
       <div class="theme-grid" id="themeGrid"></div>
       <div class="sec-title">Flash 版本</div>
       <select class="sel" id="flashSelect" onchange="changeFlash(this.value)">
+        <option value="system">内置国内版 34.0.0.376（纯净版）</option>
         <option value="bundled">内置国际版 32.0.0.344</option>
-        <option value="system">内置国内版 34.0.0.380</option>
       </select>
+      <div class="sec-title">抓包模式</div>
+      <select class="sel" id="captureModeSel" onchange="changeCaptureMode(this.value)">
+        <option value="off">关闭</option>
+        <option value="stats">组织统计（生成 Excel）</option>
+        <option value="full">全量抓包（导出原始文件）</option>
+      </select>
+      <div class="row-hint" style="margin-top:6px">切换后需重启应用生效</div>
+
+      <div class="sec-title">性能</div>
       <div class="row">
-        <span class="row-label">抓包模式<span class="row-hint">每周导出用，切换后需重启</span></span>
+        <span class="row-label">强制启用 GPU<span class="row-hint">无视驱动黑名单；可能花屏/掉帧，切换后需重启</span></span>
         <label class="switch">
-          <input type="checkbox" id="captureChk" onchange="toggleCapture(this.checked)">
+          <input type="checkbox" id="gpuChk" onchange="toggleForceGpu(this.checked)">
+          <span class="track"></span>
+        </label>
+      </div>
+      <div class="row">
+        <span class="row-label">性能诊断日志<span class="row-hint">每 60 秒记录一次进程/内存到 perf.log</span></span>
+        <label class="switch">
+          <input type="checkbox" id="perfChk" onchange="togglePerfDiag(this.checked)">
           <span class="track"></span>
         </label>
       </div>
 
-      <div class="sec-title">抓包导出说明</div>
+      <div class="sec-title">组织统计抓包说明</div>
       <div class="guide">
-        开启「抓包模式」后应用会自动重启并进入游戏。依次打开以下 5 个界面（打开即会被记录）：
+        选「组织统计」并重启后进入游戏。依次打开以下 5 个界面（打开即会被记录）：
         <ol>
           <li><span class="step-name">组织成员</span>：组织 → 组织成员</li>
           <li><span class="step-name">本周捐献</span>：组织 → 组织捐献 → 本周捐献</li>
@@ -1313,9 +1400,18 @@ function createLauncherWindow() {
           <li><span class="step-name">忍战数据</span>：忍界大战参谋（或 跨服忍界大战接引忍者）→ 参与忍界大战（或 参加跨服忍界大战）→ 礼包分配</li>
         </ol>
         <div class="done">
+          抓包期间会略微卡顿，属正常现象。<br>
           完成后：① 关闭「火影忍者」游戏窗口　② 托盘图标右键 → 关闭启动器。<br>
-          退出后会自动在桌面「火影组织数据/&lt;日期&gt;/」生成 5 张 Excel。
+          退出后会自动在桌面「火影组织数据/&lt;日期&gt;/」生成 6 张 Excel。
         </div>
+      </div>
+
+      <div class="sec-title">全量抓包说明</div>
+      <div class="guide">
+        选「全量抓包」并重启后正常玩游戏即可，<b>不会生成 Excel</b>。<br>
+        退出启动器时，会把本次会话的全部原始网络数据导出到桌面
+        「火影全量抓包/&lt;时间&gt;/」，含 net-log（socket 原始字节）、http jsonl 与一份说明.txt。
+        <div class="done">用于以后做更深入的数据分析；文件可能较大，分析完可自行删除。</div>
       </div>
     </div>
   </section>
@@ -1329,7 +1425,9 @@ function createLauncherWindow() {
     function joinQQGroup() { shell.openExternal('https://qm.qq.com/q/kHOKaFZRqo'); }
     function openSite() { shell.openExternal('http://49.235.142.253/'); }
     function changeFlash(choice) { ipcRenderer.send('set-flash-choice', choice); }
-    function toggleCapture(on) { ipcRenderer.send('set-capture', on); }
+    function changeCaptureMode(mode) { ipcRenderer.send('set-capture-mode', mode); }
+    function toggleForceGpu(on) { ipcRenderer.send('set-force-gpu', on); }
+    function togglePerfDiag(on) { ipcRenderer.send('set-perf-diag', on); }
     function setTheme(t) { ipcRenderer.send('set-theme', t); }
 
     function applyTheme(t) {
@@ -1376,13 +1474,29 @@ function createLauncherWindow() {
     document.getElementById('btnSheetClose').onclick = closeSheet;
     mask.onclick = closeSheet;
 
+    // 鼠标在面板外的遮罩区域滚动时，也把设置内容跟着滚（否则会以为"滚动坏了"）
+    mask.addEventListener('wheel', function (e) {
+      const b = document.querySelector('.sheet-body');
+      if (!b) return;
+      b.scrollTop += e.deltaY;
+      e.preventDefault();
+    }, { passive: false });
+
     ipcRenderer.on('theme-changed', function (e, t) { applyTheme(t); });
     ipcRenderer.on('flash-choice', function (e, c) {
       const s = document.getElementById('flashSelect');
-      if (s) s.value = c || 'bundled';
+      if (s) s.value = c || 'system';
     });
-    ipcRenderer.on('capture-state', function (e, on) {
-      const c = document.getElementById('captureChk');
+    ipcRenderer.on('capture-mode-state', function (e, mode) {
+      const s = document.getElementById('captureModeSel');
+      if (s) s.value = mode || 'off';
+    });
+    ipcRenderer.on('force-gpu-state', function (e, on) {
+      const c = document.getElementById('gpuChk');
+      if (c) c.checked = !!on;
+    });
+    ipcRenderer.on('perf-diag-state', function (e, on) {
+      const c = document.getElementById('perfChk');
       if (c) c.checked = !!on;
     });
 
@@ -1396,21 +1510,30 @@ function createLauncherWindow() {
   launcherWindow.webContents.on('did-finish-load', () => {
     launcherWindow.webContents.send('theme-changed', currentTheme);
     launcherWindow.webContents.send('flash-choice', config.flashChoice);
-    launcherWindow.webContents.send('capture-state', !!config.captureEnabled);
+    launcherWindow.webContents.send('capture-mode-state', normalizeCaptureMode(config.captureMode));
+    launcherWindow.webContents.send('force-gpu-state', config.forceGpu !== false);
+    launcherWindow.webContents.send('perf-diag-state', !!config.perfDiag);
   });
 
-  launcherWindow.on('close', (event) => {
-    if (!isQuitting) {
-      event.preventDefault();
-      launcherWindow.hide();
-    }
-  });
-
+  // 关闭即销毁（不再 hide）：玩游戏时启动器不必常驻一个渲染进程，托盘可随时重新打开。
+  // 注意：因此 window-all-closed 不再退出应用（见文件末尾），退出统一走托盘菜单 / before-quit。
   launcherWindow.on('closed', () => {
     launcherWindow = null;
   });
 
   log('启动器窗口创建成功');
+}
+
+// 显示启动器：窗口不存在（已销毁）时重建
+function showLauncherWindow() {
+  if (launcherWindow && !launcherWindow.isDestroyed()) {
+    if (launcherWindow.isMinimized()) launcherWindow.restore();
+    launcherWindow.show();
+    launcherWindow.focus();
+    return launcherWindow;
+  }
+  createLauncherWindow();
+  return launcherWindow;
 }
 
 function createGameWindow(url, gameName, account, opts) {
@@ -1419,6 +1542,9 @@ function createGameWindow(url, gameName, account, opts) {
 
   // plain = 非火影（如 4399）：加载极简窗口，不显示火影工具栏
   const plain = !!(opts && opts.plain);
+
+  // 本窗口的会话槽位：让不同窗口的标签使用互不冲突的 partition（避免多窗口串号）
+  const windowSlot = ++gameWindowSlotCounter;
 
   const displays = screen.getAllDisplays();
   let primaryDisplay = screen.getPrimaryDisplay();
@@ -1498,7 +1624,8 @@ function createGameWindow(url, gameName, account, opts) {
       accounts: plain ? [] : accounts,
       account: plain ? null : account,
       diskCache: config.diskCache !== false,
-      plain: plain
+      plain: plain,
+      windowSlot: windowSlot
     });
 
     // 发送当前配置
@@ -1592,8 +1719,9 @@ function createGameWindow(url, gameName, account, opts) {
   });
 
   addListener('refresh-page', (event) => {
-    // 杀掉残留 Flash 插件进程，触发 plugin-crashed 自动冷启动恢复
-    killFlashPluginProcesses();
+    // 刷新由 game.html 自己 reload 当前标签完成。
+    // 这里不能再调 killFlashPluginProcesses()：它按进程类型匹配，会把所有窗口/标签的
+    // Flash 一起杀掉，导致其它账号全部重载。全局回收只在最后一个游戏窗口关闭时做。
   });
 
   addListener('clear-cache', (event) => {
@@ -1701,15 +1829,15 @@ function createGameWindow(url, gameName, account, opts) {
         log('账号管理窗口已关闭');
       }
 
-      if (launcherWindow && !launcherWindow.isDestroyed()) {
-        launcherWindow.show();
-        launcherWindow.focus();
-        launcherWindow.setAlwaysOnTop(true);
+      // 游戏窗口全关 → 唤回启动器（已关闭则重建）
+      const lw = showLauncherWindow();
+      if (lw && !lw.isDestroyed()) {
+        lw.setAlwaysOnTop(true);
         setTimeout(() => {
-          if (!launcherWindow.isDestroyed()) {
-            launcherWindow.setAlwaysOnTop(false);
+          if (lw && !lw.isDestroyed()) {
+            lw.setAlwaysOnTop(false);
             // 置顶切换可能干扰重绘，强制刷新一次
-            try { launcherWindow.webContents.invalidate(); } catch (e) {}
+            try { lw.webContents.invalidate(); } catch (e) {}
           }
         }, 100);
       }
@@ -1737,9 +1865,7 @@ function createTray() {
     {
       label: '显示启动器',
       click: () => {
-        if (launcherWindow) {
-          launcherWindow.show();
-        }
+        showLauncherWindow();
       }
     },
     {
@@ -1800,9 +1926,7 @@ function createTray() {
   tray.setContextMenu(contextMenu);
   
   tray.on('click', () => {
-    if (launcherWindow) {
-      launcherWindow.show();
-    }
+    showLauncherWindow();
   });
 }
 
@@ -2327,9 +2451,12 @@ app.whenReady().then(() => {
   updater.init({ log, currentVersion: CURRENT_VERSION });
 
   // 初始化流量抓包层（关闭时零副作用）
-  capture.initCapture({ enabled: CAPTURE_ENABLED });
-  if (CAPTURE_ENABLED) {
-    log('[capture] 抓包已开启，输出目录: ' + capture.getCaptureDir());
+  // [全量抓包] CDP 抓包（http-*.jsonl）只有全量模式需要；组织统计走 net-log，不需要它
+  capture.initCapture({ enabled: CAPTURE_MODE === 'full' });
+  if (CAPTURE_MODE === 'full') {
+    log('[capture] 全量抓包已开启，输出目录: ' + capture.getCaptureDir());
+  } else if (CAPTURE_MODE === 'stats') {
+    log('[capture] 组织统计抓包已开启（net-log）');
   }
 
   // 启动时延迟执行自动清理，避免同步 IO 阻塞主进程
@@ -2378,7 +2505,7 @@ app.whenReady().then(() => {
     config.flashChoice = (choice === 'system') ? 'system' : 'bundled';
     saveConfig();
     log('Flash 版本已切换为: ' + config.flashChoice);
-    const label = (config.flashChoice === 'system') ? '内置国内版 34.0.0.380' : '内置国际版 32.0.0.344';
+    const label = (config.flashChoice === 'system') ? '内置国内版 34.0.0.376（纯净版）' : '内置国际版 32.0.0.344';
     const { response } = await dialog.showMessageBox({
       type: 'info',
       title: 'Flash 版本切换',
@@ -2392,14 +2519,18 @@ app.whenReady().then(() => {
   });
   
   // 抓包模式：写入 config，需重启生效（net-log 开关需在 app ready 前设置）
-  ipcMain.on('set-capture', async (event, on) => {
-    config.captureEnabled = !!on;
+  ipcMain.on('set-capture-mode', async (event, mode) => {
+    mode = normalizeCaptureMode(mode);
+    config.captureMode = mode;
+    config.captureEnabled = (mode !== 'off');   // 兼容老字段
     saveConfig();
-    log('[capture] 抓包模式已' + (on ? '开启' : '关闭'));
+    const label = mode === 'stats' ? '组织统计（生成 Excel）'
+      : (mode === 'full' ? '全量抓包（导出原始文件）' : '关闭');
+    log('[capture] 抓包模式已切换为: ' + mode);
     const { response } = await dialog.showMessageBox({
       type: 'info',
       title: '抓包模式',
-      message: '已' + (on ? '开启' : '关闭') + '抓包模式，需要重启应用才能生效。',
+      message: '已切换为「' + label + '」，需要重启应用才能生效。',
       buttons: ['立即重启', '稍后']
     });
     if (response === 0) {
@@ -2408,6 +2539,32 @@ app.whenReady().then(() => {
       app.quit();
     }
   });
+
+  // 强制启用 GPU：命令行开关需在启动前设置，故提示重启
+  ipcMain.on('set-force-gpu', async (event, on) => {
+    config.forceGpu = !!on;
+    saveConfig();
+    log('强制启用 GPU 已' + (on ? '开启' : '关闭'));
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      title: '强制启用 GPU',
+      message: '已' + (on ? '开启' : '关闭') + '强制启用 GPU，需要重启应用才能生效。',
+      buttons: ['立即重启', '稍后']
+    });
+    if (response === 0) {
+      isQuitting = true;
+      app.relaunch();
+      app.quit();
+    }
+  });
+
+  // 性能诊断日志：即时生效
+  ipcMain.on('set-perf-diag', (event, on) => {
+    config.perfDiag = !!on;
+    saveConfig();
+    log('性能诊断日志已' + (on ? '开启' : '关闭'));
+  });
+
 
   // 标签节流：双开时冻结非活跃标签，资源全部给当前玩的标签
   ipcMain.on('set-tab-throttle', (event, data) => {
@@ -2445,6 +2602,27 @@ app.whenReady().then(() => {
   createLauncherWindow();
   createTray();
 
+  // 性能诊断：开启后每 60s 记录一次进程/内存汇总到 userData/perf.log
+  setInterval(() => {
+    if (!config.perfDiag) return;
+    try {
+      const metrics = app.getAppMetrics();
+      let rss = 0;
+      const types = {};
+      for (const m of metrics) {
+        rss += (m.memory && m.memory.workingSetSize) ? m.memory.workingSetSize : 0;
+        const t = String(m.type || '?');
+        types[t] = (types[t] || 0) + 1;
+      }
+      const line = '[' + new Date().toISOString() + '] procs=' + metrics.length +
+        ' rss=' + (rss / 1024).toFixed(0) + 'MB ' + JSON.stringify(types) +
+        ' gameWindows=' + gameWindows.length +
+        ' launcher=' + ((launcherWindow && !launcherWindow.isDestroyed()) ? 1 : 0) + '\n';
+      fs.appendFileSync(path.join(app.getPath('userData'), 'perf.log'), line);
+    } catch (e) {}
+  }, 60000);
+
+
   
   setTimeout(() => {
     if (isWindows11 && hvciStatus === 'enabled') {
@@ -2454,9 +2632,8 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  // 托盘常驻应用：窗口全关（例如关掉启动器）不退出应用，退出统一走托盘「退出」菜单。
+  // 真实退出会先触发 before-quit，所以这里不退出不影响退出流程。
 });
 
 app.on('activate', () => {
@@ -2470,13 +2647,23 @@ app.on('before-quit', () => {
   // 自动更新 quitAndInstall() / 托盘退出都会失效）
   isQuitting = true;
 
-  // 抓包开启时，退出前拉起独立导出进程（等主进程退出、netlog 写完后自动生成 5 个 Excel）
-  if (capture.isCaptureEnabled()) {
+  // 抓包开启时，退出前拉起独立导出进程（等主进程退出、netlog 写完后自动处理）
+  // stats：解析 net-log → 生成 6 张 Excel（组织统计）
+  if (CAPTURE_MODE === 'stats') {
     try {
       spawn(process.execPath, ['--export', String(process.pid)], { detached: true, stdio: 'ignore' }).unref();
-      log('[capture] 已启动导出子进程');
+      log('[capture] 已启动组织统计导出子进程');
     } catch (e) {
       log('[capture] 启动导出子进程失败: ' + e.message, 'WARN');
+    }
+  }
+  // [全量抓包] full：把本次会话的原始抓包文件导出到桌面
+  else if (CAPTURE_MODE === 'full') {
+    try {
+      spawn(process.execPath, ['--dump-capture', String(process.pid)], { detached: true, stdio: 'ignore' }).unref();
+      log('[capture] 已启动全量抓包导出子进程');
+    } catch (e) {
+      log('[capture] 启动全量抓包导出子进程失败: ' + e.message, 'WARN');
     }
   }
   saveConfig();
