@@ -1563,8 +1563,8 @@
       renderAccountSidebar();
     });
 
-    ipcRenderer.on('theme-update', (event, theme) => {
-      applyTheme(theme);
+    ipcRenderer.on('theme-update', (event, colors) => {
+      applyTheme(colors);
     });
 
     ipcRenderer.on('speed-update', (event, speed) => {
@@ -1646,88 +1646,20 @@
       });
     });
 
-    // 主题应用
-    function applyTheme(theme) {
-      const themes = {
-        mint: {
-          bg1: '#ffffff',
-          bg2: '#f0fdfa',
-          border: '#d7ece8',
-          text: '#1e2a37',
-          sub: '#7c8794',
-          btnBg: '#ffffff',
-          btnHover: '#f0fdfa',
-          btnBorder: '#cfe3df',
-          separator: '#dbe7e5',
-          accent: '#14b8a6'
-        },
-        sky: {
-          bg1: '#ffffff',
-          bg2: '#eff6ff',
-          border: '#d7e6fb',
-          text: '#1e2a3a',
-          sub: '#7d8899',
-          btnBg: '#ffffff',
-          btnHover: '#eff6ff',
-          btnBorder: '#cfe0f7',
-          separator: '#dbe7f7',
-          accent: '#3b82f6'
-        },
-        sakura: {
-          bg1: '#ffffff',
-          bg2: '#fff1f7',
-          border: '#f7d7e6',
-          text: '#3a1e2a',
-          sub: '#997d8a',
-          btnBg: '#ffffff',
-          btnHover: '#fff1f7',
-          btnBorder: '#f0cfe0',
-          separator: '#f3dbe8',
-          accent: '#ec4899'
-        },
-        amber: {
-          bg1: '#ffffff',
-          bg2: '#fff7ed',
-          border: '#f7e0c8',
-          text: '#3a2a1e',
-          sub: '#9a8a7d',
-          btnBg: '#ffffff',
-          btnHover: '#fff7ed',
-          btnBorder: '#f0d7bd',
-          separator: '#f3e2d0',
-          accent: '#f97316'
-        },
-        night: {
-          bg1: '#1b2430',
-          bg2: '#161b22',
-          border: '#2a3442',
-          text: '#e6edf3',
-          sub: '#8b97a6',
-          btnBg: '#222c38',
-          btnHover: '#2a3442',
-          btnBorder: '#33404f',
-          separator: '#2a3442',
-          accent: '#2dd4bf'
-        }
-      };
-      // 旧主题 key 兼容
-      themes.light = themes.mint;
-      themes.blue = themes.sky;
-      themes.orange = themes.amber;
-      themes.dark = themes.night;
-
-      const t = themes[theme] || themes.mint;
+    // 主题应用：颜色由主进程统一下发（main.js 的 THEMES 是唯一数据源）
+    function applyTheme(c) {
+      if (!c) return;
       const root = document.documentElement;
-      root.style.setProperty('--bg1', t.bg1);
-      root.style.setProperty('--bg2', t.bg2);
-      root.style.setProperty('--border', t.border);
-      root.style.setProperty('--text', t.text);
-      root.style.setProperty('--sub', t.sub);
-      root.style.setProperty('--btnBg', t.btnBg);
-      root.style.setProperty('--btnHover', t.btnHover);
-      root.style.setProperty('--btnBorder', t.btnBorder);
-      root.style.setProperty('--separator', t.separator);
-      root.style.setProperty('--accent', t.accent);
+      root.style.setProperty('--bg1', c.bg1);
+      root.style.setProperty('--bg2', c.bg2);
+      root.style.setProperty('--border', c.border);
+      root.style.setProperty('--text', c.text);
+      root.style.setProperty('--sub', c.sub);
+      root.style.setProperty('--btnBg', c.btnBg);
+      root.style.setProperty('--btnHover', c.btnHover);
+      root.style.setProperty('--btnBorder', c.btnBorder);
+      root.style.setProperty('--separator', c.separator);
+      root.style.setProperty('--accent', c.accent);
     }
 
     // 恢复拉伸模式状态

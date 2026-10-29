@@ -169,7 +169,8 @@ function dsDonate(m) {
   for (const p of (m[199184] || [])) {
     const plain = dec(199184, p); if (!plain) continue;
     for (const [fn, v] of pb(plain)) {
-      if (fn !== 4) continue;
+      // 同一响应里含多组榜单：4 = 今日捐献，10 = 本周捐献（取本周）
+      if (fn !== 10) continue;
       const e = pb(v);
       const [uin, sid] = playerKey(e);
       if (uin == null || seen.has(sid + '-' + uin)) continue;
@@ -211,7 +212,8 @@ function dsBeast(m) {
   for (const p of (m[199209] || [])) {
     const plain = dec(199209, p); if (!plain) continue;
     for (const [fn, v] of pb(plain)) {
-      if (fn !== 6) continue;
+      // 同一响应里含多组榜单：6 = 今日献祭，7 = 本周献祭（取本周）
+      if (fn !== 7) continue;
       const e = pb(v);
       const [uin, sid] = playerKey(e);
       if (uin == null || seen.has(sid + '-' + uin)) continue;
@@ -387,4 +389,4 @@ async function runExport(opts) {
   return outDir;
 }
 
-module.exports = { runExport, extractGameStream, buildSheets };
+module.exports = { runExport, extractGameStream, buildSheets, waitForNetlog, frames, dec, pb };
