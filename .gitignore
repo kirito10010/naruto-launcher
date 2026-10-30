@@ -4,10 +4,13 @@ node_modules/
 # Build outputs
 dist/
 release-v*/
+release-server/
 dist-*/
 *.exe
 *.blockmap
 *.yml
+# 例外：后台应用的构建配置需要进仓库（上面的 *.yml 是给 latest.yml 之类用的）
+!server-app/electron-builder.yml
 
 # Logs
 *.log

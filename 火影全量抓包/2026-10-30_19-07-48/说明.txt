@@ -1,0 +1,25 @@
+火影忍者Online 启动器 · 全量抓包导出
+导出时间：2026/10/30 下午7:07:48
+
+一、文件说明
+  netlog-*.json   Chromium 网络栈全量日志：DNS / socket / HTTP 事件，
+                  以及 socket 上实际收发的原始字节（base64）。游戏协议就藏在这里。
+  http-*.jsonl    通过 CDP 抓的 HTTP 请求/响应与 WebSocket 帧（含请求头与响应体）。
+
+二、本次导出文件
+  netlog-2026-10-30T10-59-35-671Z.json  —  78.9 MB
+  http-2026-10-30T10-59-35-822Z.jsonl  —  61.0 MB
+
+三、分析提示（给 AI 或自己看都够用）
+  · 游戏数据走明文 TCP，连的是 zone.huoying.qq.com:11096；
+    在 netlog 里搜 "11096" 找到对应 socket，取 params.bytes（base64）解码即原始字节流。
+  · 帧格式：36 字节头 + Protobuf 载荷。
+    头：magic(2)=0x0901  长度(2)  命令号(4)  序号(4)  类型(4,1=客户端/2=加密/3=明文)
+        保留(8)  selfuin(4)  selfRole(2)  serId(2)  保留(4)
+  · 载荷解密：腾讯 TEA（密钥 d796c2542916b456，QQ+CBC 链，SALT 2 字节 / ZERO 7 字节）。
+  · 已知命令号：组织成员 199179 / 捐献 199184 / 叛忍 852147 / 献祭 199209 /
+                忍战 852296(跨服)、852233(本服)
+
+四、备注
+  · 原始文件仍保留在启动器数据目录 %APPDATA%\naruto-online-launcher\captures，这里只是副本。
+  · 全量抓包文件可能较大（net-log 常达数十至数百 MB），分析完可自行删除。

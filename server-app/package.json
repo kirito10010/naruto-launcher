@@ -1,0 +1,8 @@
+{
+  "name": "hyol-online-server",
+  "version": "1.0.1",
+  "description": "火影OL 启动器 · 在线人数后台",
+  "main": "main.js",
+  "author": "",
+  "license": "ISC"
+}

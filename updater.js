@@ -11,6 +11,11 @@
 // 现方案：改用 generic provider，把代理前缀直接写进 feed URL。
 //   generic provider 只需要 GET <feed>/latest.yml，不需要 atom feed；
 //   latest.yml 里的文件是相对路径，会以 feed URL 为 base 解析，下载自动走同一个源。
+//
+// 1.7.0 起：自建镜像（网站「项目管理 → 版本发布」）作为首选更新源，
+//   GitHub 直连与加速代理保留为兜底。选源时并发拉取各源的 latest.yml，
+//   取**版本号最高**的那个；版本相同则优先网站镜像（速度最快）。
+//   这样即使镜像还没传新版本，用户也能从 GitHub 拿到更新，不会卡住。
 const { app, BrowserWindow, ipcMain, screen, dialog, net } = require('electron');
 const { autoUpdater } = require('electron-updater');
 
@@ -18,11 +23,15 @@ const OWNER = 'kirito10010';
 const REPO = 'naruto-launcher';
 // GitHub 版本无关的稳定地址：/releases/latest/download/<asset>
 const GH_LATEST = `https://github.com/${OWNER}/${REPO}/releases/latest/download`;
+// 自建镜像地址（网站的「项目管理 → 版本发布」对外提供 latest.yml）
+// HYOL_UPDATE_MIRROR 仅用于本地联调
+const MIRROR = process.env.HYOL_UPDATE_MIRROR || 'http://49.235.142.253/api/release/public/naruto-launcher';
 
-// 更新源候选表：探测是并发的，顺序只决定优先级、不影响耗时。
-// 直连放首位，能直连的机器走直连最快。
+// 更新源候选表：顺序即优先级（版本相同时优先靠前的）
+// mirror: true 表示自建镜像，可在设置里切换「优先网站 / 优先 GitHub」
 const FEEDS = [
-  { name: '直连', url: GH_LATEST },
+  { name: '网站镜像', url: MIRROR, mirror: true },
+  { name: 'GitHub 直连', url: GH_LATEST },
   { name: 'ghfast.top', url: 'https://ghfast.top/' + GH_LATEST },
   { name: 'gh-proxy.com', url: 'https://gh-proxy.com/' + GH_LATEST },
   { name: 'ghproxy.net', url: 'https://ghproxy.net/' + GH_LATEST }
@@ -44,6 +53,9 @@ let log = () => {};
 let currentVersion = '';
 let devTestMode = false;
 let feedIdx = 0;        // 当前选中的更新源下标
+let feedOrder = [];     // 本次检测的优先级顺序（按设置：网站优先 / GitHub 优先）
+let orderPos = 0;       // 当前位于 feedOrder 的位置
+let getUpdateSource = () => 'mirror';   // 'mirror' | 'github'
 let retries = 0;
 let notesPromise = null;
 
@@ -82,14 +94,14 @@ function cleanNotes(notes) {
     .trim();
 }
 
-// 基于 Electron 内置 net 的 GET：manual 重定向 + 超时 abort，失败统一 resolve null
-function netGet(url, timeoutMs) {
+// 基于 Electron 内置 net 的 GET：默认 manual 重定向（探测用）；follow=true 时自动跟随（读清单用）
+function netGet(url, timeoutMs, follow) {
   return new Promise((resolve) => {
     let settled = false;
     const done = (value) => { if (!settled) { settled = true; resolve(value); } };
     let req;
     try {
-      req = net.request({ url, method: 'GET', redirect: 'manual' });
+      req = net.request({ url, method: 'GET', redirect: follow ? 'follow' : 'manual' });
     } catch (e) {
       done(null);
       return;
@@ -99,11 +111,13 @@ function netGet(url, timeoutMs) {
       done(null);
     }, timeoutMs);
     // manual 模式下 3xx 只触发 redirect 事件（对探测来说也算可用）
-    req.on('redirect', (statusCode) => {
-      clearTimeout(timer);
-      try { req.abort(); } catch (e) { /* ignore */ }
-      done({ status: statusCode, body: '' });
-    });
+    if (!follow) {
+      req.on('redirect', (statusCode) => {
+        clearTimeout(timer);
+        try { req.abort(); } catch (e) { /* ignore */ }
+        done({ status: statusCode, body: '' });
+      });
+    }
     req.on('response', (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
@@ -133,6 +147,78 @@ async function probeFeeds() {
     return i;
   }
   return null;
+}
+
+// 从 latest.yml 文本里取 version
+function parseVersionFromYml(text) {
+  const m = /^version:\s*([^\s]+)/m.exec(String(text || ''));
+  return m ? m[1].replace(/^v/i, '').trim() : '';
+}
+
+// 版本比较：a > b → 1，a < b → -1，相等 → 0
+function cmpVersion(a, b) {
+  const pa = String(a || '').split('.').map((x) => parseInt(x, 10) || 0);
+  const pb = String(b || '').split('.').map((x) => parseInt(x, 10) || 0);
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
+// 按设置计算优先级顺序：'mirror' = 网站优先，'github' = GitHub/代理优先（网站兜底）
+function computeFeedOrder() {
+  const mirrorIdx = FEEDS.findIndex((f) => f.mirror);
+  const others = FEEDS.map((_, i) => i).filter((i) => i !== mirrorIdx);
+  if (mirrorIdx < 0) return others;
+  return getUpdateSource() === 'github'
+    ? others.concat([mirrorIdx])
+    : [mirrorIdx].concat(others);
+}
+
+// 选源：并发拉各源的 latest.yml（跟随重定向拿正文），
+// 先取版本号最高的那一批，再按设置的优先级决定用哪个源。
+// 全部拿不到清单时退回“能连上就用”。
+async function pickFeed() {
+  const results = await Promise.all(FEEDS.map(async (f, i) => {
+    const r = await netGet(f.url + '/latest.yml', PROBE_TIMEOUT, true);
+    if (!r || r.status !== 200 || !r.body) return null;
+    const version = parseVersionFromYml(r.body);
+    if (!version) return null;
+    return { idx: i, version: version };
+  }));
+
+  feedOrder = computeFeedOrder();
+  orderPos = 0;
+
+  let maxV = '';
+  const seen = [];
+  for (const r of results) {
+    if (!r) continue;
+    seen.push(FEEDS[r.idx].name + '=' + r.version);
+    if (cmpVersion(r.version, maxV) > 0) maxV = r.version;
+  }
+  if (seen.length) info('各源版本: ' + seen.join(', '));
+
+  if (maxV) {
+    for (const idx of feedOrder) {
+      const r = results[idx];
+      if (r && cmpVersion(r.version, maxV) === 0) {
+        orderPos = feedOrder.indexOf(idx);
+        info('选中更新源: ' + FEEDS[idx].name + ' (v' + r.version + '，策略=' + getUpdateSource() + ')');
+        return idx;
+      }
+    }
+  }
+
+  // 都拿不到清单（例如全部 3xx 无正文）→ 退回可用性探测
+  const probed = await probeFeeds();
+  if (probed != null) {
+    feedOrder = computeFeedOrder();
+    orderPos = Math.max(0, feedOrder.indexOf(probed));
+  }
+  return probed;
 }
 
 function applyFeed(idx) {
@@ -243,7 +329,7 @@ function startDownload() {
 // ---------- 检测 ----------
 async function runCheck() {
   notesPromise = fetchReleaseNotes();   // 与检测并行
-  const idx = await probeFeeds();
+  const idx = await pickFeed();         // 多源取版本最高者（镜像优先）
   if (idx == null) {
     log('[update] 所有更新源均不可用，本次跳过更新检查', 'WARN');
     return;
@@ -265,6 +351,8 @@ async function onUpdateAvailable(updateInfo) {
 
   let notes = '';
   try { notes = (await notesPromise) || ''; } catch (e) { notes = ''; }
+  // GitHub API 拉不到时，退回 latest.yml 里带的 releaseNotes（网站发布页会写进清单）
+  if (!notes.trim() && updateInfo.releaseNotes) notes = String(updateInfo.releaseNotes);
   if (!notes.trim()) notes = FALLBACK_NOTES;
   info('更新说明长度: ' + notes.length);
   updateInfo.releaseNotes = notes;
@@ -309,11 +397,14 @@ function onError(e) {
 
   closeProgressWindow();
 
-  // 换下一个候选源重试：换源后必须重新 checkForUpdates() 才能重新解析文件 URL
-  if (showError && retries < MAX_RETRY && feedIdx < FEEDS.length - 1) {
+  // 换下一个候选源重试：按本次检测的优先级顺序走（网站优先 / GitHub 优先）
+  if (showError && retries < MAX_RETRY && orderPos < feedOrder.length - 1) {
     retries++;
-    feedIdx++;
-    log('[update] 切换下载源重试 #' + retries + ' → ' + FEEDS[feedIdx].name, 'WARN');
+    orderPos++;
+    feedIdx = feedOrder[orderPos];
+    // 第一次重试起改用全量下载：增量下载对 Range/旧 blockmap 有要求，失败就别再试
+    autoUpdater.disableDifferentialDownload = true;
+    log('[update] 切换下载源重试 #' + retries + ' → ' + FEEDS[feedIdx].name + '（全量下载）', 'WARN');
     applyFeed(feedIdx);
     autoUpdater.checkForUpdates()
       .then(() => startDownload())
@@ -337,6 +428,7 @@ function onError(e) {
 function init(opts) {
   log = (opts && opts.log) || (() => {});
   currentVersion = (opts && opts.currentVersion) || app.getVersion();
+  getUpdateSource = (opts && opts.getUpdateSource) || (() => 'mirror');
 
   devTestMode = process.env.NARUTO_UPDATE_TEST === '1';
   if (!app.isPackaged && !devTestMode) { log('开发模式，跳过自动更新检查'); return; }
@@ -359,7 +451,9 @@ function init(opts) {
   }
 
   autoUpdater.autoDownload = false;   // 必须：否则弹窗前就偷偷下载，进度事件会丢
-  autoUpdater.disableDifferentialDownload = true;   // 代理对多段 Range 支持不确定，全量下载更稳
+  // 增量下载：只下变化的块（通常 3~10MB，比整包 67MB 快很多）。
+  // 若因代理/Range 失败，onError 的重试路径会切回全量下载。
+  autoUpdater.disableDifferentialDownload = false;
 
   ipcMain.on('update-window-height', (event, h) => {
     if (updateWindow && !updateWindow.isDestroyed()) {
@@ -382,6 +476,7 @@ function init(opts) {
       closeUpdateWindow();
       showError = true;
       retries = 0;
+      autoUpdater.disableDifferentialDownload = false;   // 新一轮下载先试增量
       startDownload();
     }
   });

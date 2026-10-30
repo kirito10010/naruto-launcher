@@ -5,6 +5,7 @@ const fs = require('fs');
 const { execFile, exec, spawn } = require('child_process');
 const os = require('os');
 const capture = require('./capture');
+const online = require('./online');
 
 // 导出模式：由主进程退出时 spawn 的子进程执行（见 before-quit），不建任何窗口
 if (process.argv.includes('--export')) {
@@ -53,6 +54,24 @@ if (process.argv.includes('--export-quiz')) {
     .catch((e) => {
       try {
         fs.appendFileSync(path.join(app.getPath('userData'), 'quiz-export-error.log'),
+          '[' + new Date().toISOString() + '] ' + (e && e.stack || String(e)) + '\n');
+      } catch (_) {}
+    })
+    // 同 --export：避免 Electron 退出流程在 teardown 阶段崩溃
+    .finally(() => setTimeout(() => process.exit(0), 200));
+  return;
+}
+
+// [题库抓包] 喵问答导出：由主进程退出时 spawn 的子进程执行（见 before-quit），不建任何窗口
+// 解析「喵问答」的 20 道题 + 配图，导出 JSON 与 images 文件夹
+if (process.argv.includes('--export-miao')) {
+  const _mIdx = process.argv.indexOf('--export-miao');
+  const _mPid = parseInt(process.argv[_mIdx + 1], 10) || 0;
+  app.whenReady()
+    .then(() => require('./miao-export').runMiaoExport({ mainPid: _mPid }))
+    .catch((e) => {
+      try {
+        fs.appendFileSync(path.join(app.getPath('userData'), 'miao-export-error.log'),
           '[' + new Date().toISOString() + '] ' + (e && e.stack || String(e)) + '\n');
       } catch (_) {}
     })
@@ -305,12 +324,14 @@ const EARLY_CONFIG = readConfigSync();
 
 // 抓包模式：off（关闭）/ stats（组织统计 → 生成 Excel）/ full（全量抓包 → 导出原始文件）
 //           / quiz（题库抓包 → 解析「考官红豆·忍者检测」题目，导出 JSON）
+//           / miao（题库抓包 → 解析「喵问答」题目 + 配图，导出 JSON）
 function normalizeCaptureMode(v) {
-  if (v === 'off' || v === 'stats' || v === 'full' || v === 'quiz') return v;
+  if (v === 'off' || v === 'stats' || v === 'full' || v === 'quiz' || v === 'miao') return v;
   return v === true ? 'stats' : 'off';   // 兼容老的 captureEnabled: true
 }
 const CAPTURE_MODE =
   process.argv.includes('--capture-full') ? 'full' :
+  process.argv.includes('--capture-miao') ? 'miao' :
   (process.argv.includes('--capture-traffic') || process.env.NARUTO_CAPTURE === '1') ? 'stats' :
   normalizeCaptureMode(
     EARLY_CONFIG.captureMode !== undefined ? EARLY_CONFIG.captureMode : EARLY_CONFIG.captureEnabled
@@ -345,9 +366,10 @@ let config = {
   diskCache: true,
   flashChoice: 'system',
   captureEnabled: false,
-  captureMode: 'off',   // off / stats（组织统计→Excel） / full（全量抓包→原始文件） / quiz（题库抓包→JSON）
+  captureMode: 'off',   // off / stats（组织统计→Excel） / full（全量抓包→原始文件） / quiz（忍者检测→JSON） / miao（喵问答→JSON+图片）
   forceGpu: true,     // 强制启用 GPU（无视驱动黑名单），默认保持原行为
   softwareRender: false,  // 软件渲染（兼容模式）：显卡驱动有问题的机器兜底
+  updateSource: 'mirror', // 更新下载线路：mirror = 网站优先（默认） / github = GitHub 优先
   perfDiag: false     // 性能诊断日志（每 60s 记录一次进程/内存）
 };
 
@@ -536,6 +558,8 @@ function loadConfig() {
       currentSpeedRate = config.lastSpeed || 1;
       if (config.diskCache === undefined) config.diskCache = true;
       if (config.flashChoice === undefined) config.flashChoice = 'system';
+      // 更新线路：默认网站优先
+      if (config.updateSource !== 'github') config.updateSource = 'mirror';
       log('配置已加载: theme=' + currentTheme + ', lastSpeed=' + currentSpeedRate);
     } else {
       log('配置文件不存在，使用默认配置');
@@ -674,6 +698,31 @@ function attachCrashRecovery(wc, label) {
 function attachWindowWatch(wc, label) {
   attachFreezeWatch(wc, label);
   attachCrashRecovery(wc, label);
+}
+
+// ========== 在线人数 ==========
+
+// 本机当前打开的标签页数（火影 / 4399 分开）
+function getOnlineCounts() {
+  let fire = 0, mini = 0;
+  for (const gw of gameWindows) {
+    if (!gw || !gw.win || gw.win.isDestroyed()) continue;
+    const n = gw.tabs || 0;
+    if (gw.plain) mini += n; else fire += n;
+  }
+  return { fire, mini };
+}
+
+// 客户端标识：纯随机串，仅用于服务端去重，不含任何个人信息
+function ensureClientId() {
+  if (config.clientId) return config.clientId;
+  try {
+    config.clientId = require('crypto').randomBytes(12).toString('hex');
+  } catch (e) {
+    config.clientId = 'c' + Date.now().toString(36);
+  }
+  saveConfig();
+  return config.clientId;
 }
 
 // GPU 进程崩溃/被 OOM 杀掉，最常见的表现就是「游戏窗口突然卡死」。
@@ -1571,6 +1620,14 @@ function createLauncherWindow() {
   .gc-title { font-size:15px; font-weight:600; }
   .gc-sub { font-size:11.5px; color:var(--sub); margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .gc-go { font-size:20px; color:var(--sub); }
+  /* 在线人数胶囊 */
+  .gc-online {
+    flex:0 0 auto; display:flex; align-items:center; gap:5px;
+    padding:3px 8px; border-radius:20px;
+    font-size:10.5px; color:var(--sub); background:var(--hover);
+  }
+  .gc-online .dot { width:5px; height:5px; border-radius:50%; background:var(--accent); }
+  .gc-online b { font-weight:600; color:var(--text); }
   .quick { margin-top:auto; display:flex; gap:10px; padding-bottom:8px; }
   .pill {
     flex:1; padding:11px; border:none; border-radius:12px; cursor:pointer;
@@ -1745,6 +1802,7 @@ function createLauncherWindow() {
           <div class="gc-title">火影忍者Online</div>
           <div class="gc-sub">huoying.qq.com</div>
         </div>
+        <span class="gc-online" id="onlineFire"><i class="dot"></i><b>--</b></span>
         <div class="gc-go">&#8250;</div>
       </div>
       <div class="game-card" onclick="launchGame('https://www.4399.com/', '4399小游戏')">
@@ -1753,6 +1811,7 @@ function createLauncherWindow() {
           <div class="gc-title">4399小游戏</div>
           <div class="gc-sub">www.4399.com</div>
         </div>
+        <span class="gc-online" id="onlineMini"><i class="dot"></i><b>--</b></span>
         <div class="gc-go">&#8250;</div>
       </div>
     </div>
@@ -1792,10 +1851,21 @@ function createLauncherWindow() {
           <option value="stats">组织统计（生成 Excel）</option>
           <option value="full">全量抓包（导出原始文件）</option>
           <option value="quiz">题库抓包（忍者检测）</option>
+          <option value="miao">题库抓包（喵问答）</option>
         </select>
         <button class="info-btn" onclick="openHelp('capture')" title="抓包模式说明">说明</button>
       </div>
       <div class="row-hint" style="margin-top:6px">切换后需重启应用生效</div>
+
+      <div class="sec-title">更新下载</div>
+      <div class="sel-row">
+        <select class="sel" id="updateSourceSel" onchange="changeUpdateSource(this.value)">
+          <option value="mirror">网站（默认，稳定）</option>
+          <option value="github">GitHub（有外网时可能更快）</option>
+        </select>
+        <button class="info-btn" onclick="openHelp('updateSource')" title="更新下载线路说明">说明</button>
+      </div>
+      <div class="row-hint" style="margin-top:6px">下次检查更新时生效</div>
 
       <div class="sec-title">性能</div>
       <div class="row">
@@ -1847,6 +1917,7 @@ function createLauncherWindow() {
     function openSite() { shell.openExternal('http://49.235.142.253/'); }
     function changeFlash(choice) { ipcRenderer.send('set-flash-choice', choice); }
     function changeCaptureMode(mode) { ipcRenderer.send('set-capture-mode', mode); }
+    function changeUpdateSource(v) { ipcRenderer.send('set-update-source', v); }
     function toggleForceGpu(on) { ipcRenderer.send('set-force-gpu', on); }
     function togglePerfDiag(on) { ipcRenderer.send('set-perf-diag', on); }
     function toggleSoftwareRender(on) { ipcRenderer.send('set-software-render', on); }
@@ -1949,6 +2020,10 @@ function createLauncherWindow() {
           '<p>重启后找考官红豆做「忍者检测」，把 10 道题答完（答错的题也能抓，只是拿不到正确答案）。</p>' +
           '<p>完成后关闭游戏窗口，再走托盘「退出」，会在桌面「火影题库 / 忍者检测_时间.json」生成题库，内容为：题目、四个选项、正确选项。</p>' +
           '<p>因为同一道题的选项顺序每次可能不同，正确选项存的是选项原文，不是 A/B/C/D；本次答错的题正确选项为空字符串。</p>' +
+          '<span class="h">题库抓包（喵问答）</span>' +
+          '<p>重启后参加「喵问答」活动，把题答完。退出后在桌面「火影题库 / 喵问答_时间」生成 questions.json 和 images 文件夹。</p>' +
+          '<p>每条记录含：题干、四个选项、正确答案（答对才有）、我选的选项、活动加成排除的错误选项、配图路径。带图的题会把图片一起存到 images 里，文件名形如 03_10082.png（题号_资源ID）。</p>' +
+          '<p>协议本身不传正确答案（服务端判分），所以答错的题 answer 为空，但 bonusRemoved 一定是错误选项，可用排除法；同一道题多答几轮即可逐步补齐答案。</p>' +
           '<span class="h">通用</span>' +
           '<p>切换模式后需重启启动器生效；导出必须走托盘「退出」，直接关窗口会导致数据写不完、导不出。</p>'
       },
@@ -1979,6 +2054,19 @@ function createLauncherWindow() {
           '<span class="h">注意</span>' +
           '<p>开启后「强制启用 GPU」不起作用（软件渲染优先）。切换后需重启启动器生效。</p>' +
           '<p>如果只是偶尔卡一下、能自己恢复，不建议开这个。</p>'
+      },
+      updateSource: {
+        title: '更新下载线路说明',
+        html:
+          '<span class="h">网站（默认）</span>' +
+          '<p>优点：稳定、不依赖外网；支持增量更新，后续版本通常只需下几 MB，国内下载不会卡死。</p>' +
+          '<p>短板：服务器带宽 6 Mbps（约 0.75 MB/s），首次整包 67MB 大约要 90 秒；同时下载的人多时会分摊带宽。</p>' +
+          '<span class="h">GitHub</span>' +
+          '<p>优点：能稳定直连 GitHub 时，速度可能到 2~10 MB/s，整包约 7~30 秒。</p>' +
+          '<p>短板：国内大部分网络连不上，要走加速代理；代理高峰期可能只有几十 KB/s，时快时慢，不稳定。</p>' +
+          '<span class="h">怎么选</span>' +
+          '<p>不确定就用默认「网站」，最稳。用浏览器下载 GitHub 上的安装包能跑到 2MB/s 以上，再切到 GitHub。</p>' +
+          '<p>两个选项都会优先取「版本最高」的源，另一个只作兜底。切换后下次检查更新生效。</p>'
       }
     };
 
@@ -2026,6 +2114,10 @@ function createLauncherWindow() {
       const s = document.getElementById('captureModeSel');
       if (s) s.value = mode || 'off';
     });
+    ipcRenderer.on('update-source-state', function (e, v) {
+      const s = document.getElementById('updateSourceSel');
+      if (s) s.value = (v === 'github') ? 'github' : 'mirror';
+    });
     ipcRenderer.on('force-gpu-state', function (e, on) {
       const c = document.getElementById('gpuChk');
       if (c) c.checked = !!on;
@@ -2051,6 +2143,16 @@ function createLauncherWindow() {
       const freed = info && info.freed ? fmtBytes(info.freed) : '0 B';
       el.textContent = '已释放 ' + freed + ' · 现在 ' + fmtBytes(info && info.bytes);
     });
+    function setOnline(id, n) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const b = el.querySelector('b');
+      if (b) b.textContent = (typeof n === 'number') ? String(n) : '--';
+    }
+    ipcRenderer.on('online-update', function (e, data) {
+      setOnline('onlineFire', data && data.fire);
+      setOnline('onlineMini', data && data.mini);
+    });
 
     document.addEventListener('DOMContentLoaded', function () { applyTheme(curTheme); });
   </script>
@@ -2066,6 +2168,10 @@ function createLauncherWindow() {
     launcherWindow.webContents.send('force-gpu-state', config.forceGpu !== false);
     launcherWindow.webContents.send('perf-diag-state', !!config.perfDiag);
     launcherWindow.webContents.send('software-render-state', !!config.softwareRender);
+    launcherWindow.webContents.send('update-source-state', config.updateSource === 'github' ? 'github' : 'mirror');
+    // 窗口重建时补发在线人数，避免空白
+    const lastOnline = online.getLast();
+    launcherWindow.webContents.send('online-update', lastOnline || { fire: null, mini: null });
   });
 
   // 关闭即销毁（不再 hide）：玩游戏时启动器不必常驻一个渲染进程，托盘可随时重新打开。
@@ -2169,10 +2275,16 @@ function createGameWindow(url, gameName, account, opts) {
   win.loadFile(plain ? 'browser.html' : 'game.html');
 
   // 卡死/崩溃看门狗：宿主页面 + 每个 webview 客进程
+  // 同时统计「标签页数」用于在线人数：每附加一个 webview 算 1，销毁时减 1
   const winLabel = 'game#slot' + (windowSlot || '?');
+  const tabEntry = { win, plain: !!plain, tabs: 0 };
   attachWindowWatch(win.webContents, winLabel + ' host');
   win.webContents.on('did-attach-webview', (event, guest) => {
     attachWindowWatch(guest, winLabel + ' webview');
+    tabEntry.tabs++;
+    try {
+      guest.once('destroyed', () => { tabEntry.tabs = Math.max(0, tabEntry.tabs - 1); });
+    } catch (e) { /* ignore */ }
   });
 
 
@@ -2408,7 +2520,7 @@ function createGameWindow(url, gameName, account, opts) {
     }
   });
 
-  gameWindows.push({ win });
+  gameWindows.push(tabEntry);
   log('游戏窗口创建成功: ' + gameName);
   return win;
 }
@@ -3012,16 +3124,36 @@ app.whenReady().then(() => {
   loadAccounts();
   detectWindowsVersion();
   initSpeedControl();
-  updater.init({ log, currentVersion: CURRENT_VERSION });
+  updater.init({
+    log,
+    currentVersion: CURRENT_VERSION,
+    getUpdateSource: () => config.updateSource
+  });
 
   // 初始化流量抓包层（关闭时零副作用）
-  // [全量抓包] CDP 抓包（http-*.jsonl）只有全量模式需要；组织统计走 net-log，不需要它
-  capture.initCapture({ enabled: CAPTURE_MODE === 'full' });
+  // [全量抓包] CDP 抓包（http-*.jsonl）只有全量模式和喵问答模式需要（喵问答要靠它拿配图）；
+  // 组织统计 / 忍者检测走 net-log，不需要它
+  const needCdp = CAPTURE_MODE === 'full' || CAPTURE_MODE === 'miao';
+  capture.initCapture({ enabled: needCdp });
   if (CAPTURE_MODE === 'full') {
     log('[capture] 全量抓包已开启，输出目录: ' + capture.getCaptureDir());
+  } else if (CAPTURE_MODE === 'miao') {
+    log('[capture] 喵问答抓包已开启（net-log + CDP）');
   } else if (CAPTURE_MODE === 'stats') {
     log('[capture] 组织统计抓包已开启（net-log）');
   }
+
+  // 在线人数上报（服务端不可达时静默失败，界面显示 --）
+  online.init({
+    log: log,
+    clientId: ensureClientId(),
+    getCounts: getOnlineCounts,
+    onUpdate: (data) => {
+      if (launcherWindow && !launcherWindow.isDestroyed()) {
+        launcherWindow.webContents.send('online-update', data);
+      }
+    }
+  });
 
   // 启动时延迟执行自动清理，避免同步 IO 阻塞主进程
   setTimeout(() => {
@@ -3110,7 +3242,8 @@ app.whenReady().then(() => {
     saveConfig();
     const label = mode === 'stats' ? '组织统计（生成 Excel）'
       : (mode === 'full' ? '全量抓包（导出原始文件）'
-        : (mode === 'quiz' ? '题库抓包（忍者检测）' : '关闭'));
+        : (mode === 'quiz' ? '题库抓包（忍者检测）'
+          : (mode === 'miao' ? '题库抓包（喵问答）' : '关闭')));
     log('[capture] 抓包模式已切换为: ' + mode);
     const { response } = await dialog.showMessageBox({
       type: 'info',
@@ -3170,6 +3303,14 @@ app.whenReady().then(() => {
     try {
       event.reply('storage-cleared', Object.assign({ removed, freed }, captureStorageInfo()));
     } catch (e) {}
+  });
+
+  // 更新下载线路：网站优先 / GitHub 优先（无需重启，下次检查更新生效）
+  ipcMain.on('set-update-source', (event, v) => {
+    config.updateSource = (v === 'github') ? 'github' : 'mirror';
+    saveConfig();
+    log('更新下载线路已切换为: ' + config.updateSource);
+    try { event.reply('update-source-state', config.updateSource); } catch (e) {}
   });
 
   // 软件渲染（兼容模式）：启动参数需在 app ready 前设置，故提示重启
@@ -3301,6 +3442,15 @@ app.on('before-quit', () => {
       log('[capture] 已启动题库导出子进程');
     } catch (e) {
       log('[capture] 启动题库导出子进程失败: ' + e.message, 'WARN');
+    }
+  }
+  // [题库抓包] miao：解析喵问答题目 + 配图，导出 JSON
+  else if (CAPTURE_MODE === 'miao') {
+    try {
+      spawn(process.execPath, _spawnAppArgs.concat(['--export-miao', String(process.pid)]), { detached: true, stdio: 'ignore' }).unref();
+      log('[capture] 已启动喵问答导出子进程');
+    } catch (e) {
+      log('[capture] 启动喵问答导出子进程失败: ' + e.message, 'WARN');
     }
   }
   saveConfig();

@@ -1,11 +1,12 @@
 {
   "name": "naruto-online-launcher",
-  "version": "1.5.0",
+  "version": "1.10.0",
   "description": "火影忍者Online页游启动器",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "build:server": "electron-builder --projectDir server-app -w zip"
   },
   "keywords": [
     "naruto",
@@ -23,7 +24,7 @@
     "appId": "com.example.naruto-launcher",
     "productName": "NarutoOnlineLauncher",
     "directories": {
-      "output": "release-v1.5.0"
+      "output": "release-v1.10.0"
     },
     "icon": "resources/icons/Naruto.png",
     "files": [
@@ -31,9 +32,11 @@
       "preload.js",
       "game.html",
       "browser.html",
+      "online.js",
       "capture.js",
       "capture-dump.js",
       "quiz-export.js",
+      "miao-export.js",
       "export.js",
       "xlsx.js",
       "updater.js",

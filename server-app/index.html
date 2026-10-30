@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>在线人数后台</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  button:focus, input:focus, select:focus { outline:none; }
+  body {
+    font-family:'Microsoft YaHei', sans-serif;
+    background:linear-gradient(160deg,#eef5fb 0%,#f6f9fc 100%);
+    color:#1e2a37; font-size:13px; height:100vh;
+    display:flex; flex-direction:column; padding:14px 16px 10px;
+    -webkit-user-select:none;
+  }
+  header { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .title { font-size:16px; font-weight:700; }
+  .status { display:flex; align-items:center; gap:8px; font-size:12px; color:#7c8794; }
+  .dot { width:8px; height:8px; border-radius:50%; background:#cbd5e1; display:inline-block; }
+  .dot.on { background:#14b8a6; box-shadow:0 0 0 3px rgba(20,184,166,.15); }
+  .dot.err { background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.15); }
+  .port { color:#1e2a37; font-weight:600; }
+  .btn {
+    border:1px solid #d7e3ef; background:#fff; color:#334155; cursor:pointer;
+    padding:6px 12px; border-radius:8px; font-size:12px; transition:.15s;
+  }
+  .btn:hover { background:#f1f7fd; border-color:#b9d4ea; }
+  .btn.primary { background:linear-gradient(135deg,#14b8a6,#2dd4bf); color:#fff; border-color:transparent; font-weight:600; }
+  .btn.primary:hover { filter:brightness(1.05); }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+
+  .err {
+    background:#fef2f2; border:1px solid #fecaca; color:#b91c1c;
+    padding:8px 10px; border-radius:8px; font-size:12px; margin-bottom:10px;
+  }
+  .hidden { display:none !important; }
+
+  .stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .card {
+    background:#fff; border:1px solid #e2ebf3; border-radius:12px;
+    padding:12px 14px; box-shadow:0 3px 10px rgba(30,42,55,.05);
+  }
+  .card-title { font-size:12px; color:#7c8794; margin-bottom:6px; }
+  .card-nums { display:flex; align-items:baseline; gap:6px; }
+  .card-nums b { font-size:26px; line-height:1.1; color:#0f766e; }
+  .card-nums span { font-size:11px; color:#94a3b8; }
+  .card-sub { font-size:11.5px; color:#94a3b8; margin-top:4px; }
+  .clients {
+    margin:10px 0 12px; font-size:12px; color:#64748b;
+    background:#fff; border:1px solid #e2ebf3; border-radius:10px; padding:8px 12px;
+  }
+  .clients b { color:#1e2a37; }
+
+  .rules { flex:1; min-height:0; display:flex; flex-direction:column;
+    background:#fff; border:1px solid #e2ebf3; border-radius:12px; padding:12px; }
+  .tabs { display:flex; gap:8px; margin-bottom:10px; }
+  .tab {
+    border:1px solid #e2ebf3; background:#f8fbfe; color:#64748b;
+    padding:7px 14px; border-radius:8px; cursor:pointer; font-size:12px;
+  }
+  .tab.active { background:linear-gradient(135deg,#14b8a6,#2dd4bf); color:#fff; border-color:transparent; font-weight:600; }
+
+  #ruleList { flex:1; min-height:0; overflow-y:auto; padding-right:2px; }
+  #ruleList::-webkit-scrollbar { width:8px; }
+  #ruleList::-webkit-scrollbar-thumb { background:rgba(128,128,128,.28); border-radius:8px; border:2px solid transparent; background-clip:padding-box; }
+
+  .rule {
+    border:1px solid #e6eef6; border-radius:10px; background:#fbfdff;
+    padding:9px 10px; margin-bottom:8px;
+  }
+  .line { display:flex; align-items:center; gap:6px; }
+  .line + .line { margin-top:8px; padding-top:8px; border-top:1px dashed #eef3f8; }
+  .lbl { font-size:11px; color:#94a3b8; white-space:nowrap; }
+  .lbl + .lbl { margin-left:6px; }
+  select.t, input.num {
+    border:1px solid #dbe6f0; border-radius:7px; background:#fff; color:#1e2a37;
+    font-size:12px; padding:4px 6px; cursor:pointer;
+  }
+  select.t { width:56px; }
+  select.t:hover, input.num:hover { border-color:#b9d4ea; }
+  input.num { width:78px; cursor:text; }
+  .colon { color:#94a3b8; font-size:11px; }
+  .del {
+    margin-left:auto; width:26px; height:26px; border:none; background:#fef2f2; color:#ef4444;
+    border-radius:7px; cursor:pointer; font-size:13px; line-height:1; flex:0 0 26px;
+  }
+  .del:hover { background:#fee2e2; }
+  .empty { color:#94a3b8; font-size:12px; text-align:center; padding:26px 0; }
+
+  .actions { display:flex; justify-content:space-between; align-items:center; margin-top:10px; }
+  .hint { font-size:11px; color:#94a3b8; margin-top:8px; line-height:1.6; }
+  footer { text-align:center; font-size:11px; color:#94a3b8; padding-top:10px; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="title">在线人数后台</div>
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="statusText">启动中…</span>
+      <span class="port" id="portText">:10001</span>
+      <button class="btn" id="btnRestart">重启服务</button>
+    </div>
+  </header>
+
+  <div class="err hidden" id="errBar"></div>
+
+  <section class="stats">
+    <div class="card">
+      <div class="card-title">火影忍者Online · 显示人数</div>
+      <div class="card-nums"><b id="fireDisplay">0</b><span>人</span></div>
+      <div class="card-sub">实际在线 <span id="fireActual">0</span> 人</div>
+    </div>
+    <div class="card">
+      <div class="card-title">4399小游戏 · 显示人数</div>
+      <div class="card-nums"><b id="miniDisplay">0</b><span>人</span></div>
+      <div class="card-sub">实际在线 <span id="miniActual">0</span> 人</div>
+    </div>
+  </section>
+
+  <div class="clients">在线客户端：<b id="clientCount">0</b> 个</div>
+
+  <section class="rules">
+    <div class="tabs">
+      <button class="tab active" data-game="fire">火影忍者Online</button>
+      <button class="tab" data-game="mini">4399小游戏</button>
+    </div>
+    <div id="ruleList"></div>
+    <div class="actions">
+      <button class="btn" id="btnAdd">+ 添加规则</button>
+      <button class="btn primary" id="btnSave">保存</button>
+    </div>
+    <div class="err hidden" id="saveErr"></div>
+    <div class="hint">
+      显示人数 = 实际在线 + 虚拟人数 ± 浮动（例：实际 5、虚拟 10、浮动 2 → 13~17）。<br>
+      浮动每 10 分钟变一次；时间段不能重叠；支持跨天（如 22:00–02:00）。
+    </div>
+  </section>
+
+  <footer>关闭窗口会最小化到托盘，右键托盘图标可退出</footer>
+
+<script>
+  const { ipcRenderer } = require('electron');
+
+  let state = { running: false, error: '', port: 10001, clients: 0, fire: { actual: 0, display: 0 }, mini: { actual: 0, display: 0 }, virtual: { fire: [], mini: [] } };
+  let editing = { fire: [], mini: [] };
+  let dirty = false;
+  let game = 'fire';
+
+  const $ = (id) => document.getElementById(id);
+  const pad = (n) => String(n).padStart(2, '0');
+
+  function setText(id, v) { const el = $(id); if (el) el.textContent = String(v); }
+
+  function applyState(s) {
+    const wasDirty = dirty;
+    state = s;
+    setText('fireDisplay', s.fire.display);
+    setText('fireActual', s.fire.actual);
+    setText('miniDisplay', s.mini.display);
+    setText('miniActual', s.mini.actual);
+    setText('clientCount', s.clients);
+    setText('portText', ':' + s.port);
+
+    const dot = $('dot');
+    const errBar = $('errBar');
+    dot.className = 'dot' + (s.error ? ' err' : (s.running ? ' on' : ''));
+    setText('statusText', s.error ? '未运行' : (s.running ? '运行中' : '启动中…'));
+    if (s.error) { errBar.textContent = s.error; errBar.classList.remove('hidden'); }
+    else { errBar.classList.add('hidden'); }
+
+    if (!wasDirty) {
+      editing.fire = s.virtual.fire.map((r) => Object.assign({}, r));
+      editing.mini = s.virtual.mini.map((r) => Object.assign({}, r));
+      renderRules();
+    }
+  }
+
+  // 时 / 分 下拉
+  function makeTimeSelect(cls, val) {
+    const sel = document.createElement('select');
+    sel.className = 't ' + cls;
+    for (let i = 0; i < 24; i++) {
+      const o = document.createElement('option');
+      o.value = pad(i); o.textContent = pad(i);
+      sel.appendChild(o);
+    }
+    sel.value = val;
+    return sel;
+  }
+  function makeMinuteSelect(cls, val) {
+    const sel = document.createElement('select');
+    sel.className = 't ' + cls;
+    for (let i = 0; i < 60; i++) {
+      const o = document.createElement('option');
+      o.value = pad(i); o.textContent = pad(i);
+      sel.appendChild(o);
+    }
+    sel.value = val;
+    return sel;
+  }
+
+  function renderRules() {
+    const list = $('ruleList');
+    const rules = editing[game] || [];
+    list.innerHTML = '';
+
+    if (!rules.length) {
+      list.innerHTML = '<div class="empty">还没有规则，点下面「+ 添加规则」</div>';
+      return;
+    }
+
+    rules.forEach((r, i) => {
+      const start = (r.start || '00:00').split(':');
+      const end = (r.end || '00:00').split(':');
+
+      const card = document.createElement('div');
+      card.className = 'rule';
+
+      // 第一行：开始 / 结束 / 删除
+      const line1 = document.createElement('div');
+      line1.className = 'line';
+
+      const lblS = document.createElement('span'); lblS.className = 'lbl'; lblS.textContent = '开始';
+      const sh = makeTimeSelect('sh', start[0] || '00');
+      const c1 = document.createElement('span'); c1.className = 'colon'; c1.textContent = ':';
+      const sm = makeMinuteSelect('sm', start[1] || '00');
+      const lblE = document.createElement('span'); lblE.className = 'lbl'; lblE.textContent = '结束';
+      const eh = makeTimeSelect('eh', end[0] || '00');
+      const c2 = document.createElement('span'); c2.className = 'colon'; c2.textContent = ':';
+      const em = makeMinuteSelect('em', end[1] || '00');
+
+      const syncTime = () => {
+        r.start = sh.value + ':' + sm.value;
+        r.end = eh.value + ':' + em.value;
+        dirty = true;
+        hideSaveError();
+      };
+      sh.addEventListener('change', syncTime);
+      sm.addEventListener('change', syncTime);
+      eh.addEventListener('change', syncTime);
+      em.addEventListener('change', syncTime);
+
+      const del = document.createElement('button');
+      del.className = 'del';
+      del.textContent = '✕';
+      del.title = '删除';
+      del.addEventListener('click', () => {
+        editing[game].splice(i, 1);
+        dirty = true;
+        hideSaveError();
+        renderRules();
+      });
+
+      [lblS, sh, c1, sm, lblE, eh, c2, em, del].forEach((el) => line1.appendChild(el));
+      card.appendChild(line1);
+
+      // 第二行：虚拟人数 / 浮动
+      const line2 = document.createElement('div');
+      line2.className = 'line';
+
+      const lblV = document.createElement('span'); lblV.className = 'lbl'; lblV.textContent = '虚拟人数';
+      const v = document.createElement('input');
+      v.type = 'number'; v.min = '0'; v.max = '9999'; v.className = 'num'; v.value = r.value;
+      v.addEventListener('input', () => { r.value = v.value; dirty = true; hideSaveError(); });
+
+      const lblF = document.createElement('span'); lblF.className = 'lbl'; lblF.textContent = '浮动';
+      const f = document.createElement('input');
+      f.type = 'number'; f.min = '0'; f.max = '999'; f.className = 'num'; f.value = r.float;
+      f.addEventListener('input', () => { r.float = f.value; dirty = true; hideSaveError(); });
+
+      [lblV, v, lblF, f].forEach((el) => line2.appendChild(el));
+      card.appendChild(line2);
+
+      list.appendChild(card);
+    });
+  }
+
+  function hideSaveError() { $('saveErr').classList.add('hidden'); }
+  function showSaveError(msg) {
+    const el = $('saveErr');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+  }
+
+  $('btnAdd').addEventListener('click', () => {
+    editing[game].push({ start: '06:00', end: '09:00', value: 0, float: 0 });
+    dirty = true;
+    hideSaveError();
+    renderRules();
+    const list = $('ruleList');
+    list.scrollTop = list.scrollHeight;
+  });
+
+  $('btnSave').addEventListener('click', async () => {
+    $('btnSave').disabled = true;
+    hideSaveError();
+    try {
+      const res = await ipcRenderer.invoke('save-rules', {
+        fire: editing.fire,
+        mini: editing.mini
+      });
+      if (res && res.ok === false) {
+        showSaveError(res.error || '保存失败');
+      } else {
+        dirty = false;
+        if (res && res.state) applyState(res.state);
+        $('btnSave').textContent = '已保存';
+        setTimeout(() => { $('btnSave').textContent = '保存'; }, 1200);
+      }
+    } catch (e) {
+      showSaveError('保存失败：' + (e && e.message ? e.message : e));
+    }
+    $('btnSave').disabled = false;
+  });
+
+  $('btnRestart').addEventListener('click', async () => {
+    $('btnRestart').disabled = true;
+    try {
+      const res = await ipcRenderer.invoke('restart-server');
+      if (res && res.state) applyState(res.state);
+    } catch (e) {}
+    setTimeout(() => { $('btnRestart').disabled = false; }, 800);
+  });
+
+  document.querySelectorAll('.tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      game = btn.dataset.game;
+      hideSaveError();
+      renderRules();
+    });
+  });
+
+  ipcRenderer.on('state', (e, s) => applyState(s));
+  ipcRenderer.send('get-state');
+</script>
+</body>
+</html>

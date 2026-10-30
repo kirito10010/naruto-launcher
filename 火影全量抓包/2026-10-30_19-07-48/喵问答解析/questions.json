@@ -1,0 +1,426 @@
+[
+  {
+    "no": 1,
+    "question": "【小鸡提供】兜在第四届忍界大战之后当上了什么？",
+    "options": [
+      "大蛇丸的助理",
+      "忍者学校的老师",
+      "孤儿院的院长",
+      "木叶的火影"
+    ],
+    "image": null,
+    "answer": {
+      "index": 2,
+      "text": "孤儿院的院长"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 0,
+      "text": "大蛇丸的助理"
+    },
+    "note": "兜战后经营孤儿院并任院长"
+  },
+  {
+    "no": 2,
+    "question": "【1X提供】会三种查克拉性质变化但是不会血继淘汰的是谁？",
+    "options": [
+      "长门",
+      "照美冥",
+      "无",
+      "大野木"
+    ],
+    "image": null,
+    "answer": {
+      "index": 1,
+      "text": "照美冥"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 3,
+      "text": "大野木"
+    },
+    "note": "照美冥：水/火/土三种性质变化，溶遁+沸遁，无血继淘汰"
+  },
+  {
+    "no": 3,
+    "question": "【1X提供】图中所示为哪一种咒印？",
+    "options": [
+      "三勾玉咒印",
+      "虎咒印",
+      "天之咒印",
+      "地之咒印"
+    ],
+    "image": {
+      "id": "10082",
+      "url": "https://res.huoying.qq.com/NarutoBeta6.38Build302/assets/knowledgeTest/10082.png",
+      "file": "10082.png"
+    },
+    "answer": {
+      "index": 2,
+      "text": "天之咒印"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 0,
+      "text": "三勾玉咒印"
+    },
+    "note": "图为三勾玉排布的天之咒印（不是写轮眼的三勾玉）"
+  },
+  {
+    "no": 4,
+    "question": "【1X提供】看关键词猜人物：1.百豪 2.七班",
+    "options": [
+      "纲手",
+      "宇智波佐助",
+      "春野樱",
+      "漩涡鸣人"
+    ],
+    "image": null,
+    "answer": {
+      "index": 2,
+      "text": "春野樱"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 0,
+      "text": "纲手"
+    },
+    "note": "春野樱：七班成员 + 百豪之术"
+  },
+  {
+    "no": 5,
+    "question": "【魂夕提供】小南佩戴的戒指在哪根手指？",
+    "options": [
+      "左手食指",
+      "右手中指",
+      "左手中指",
+      "右手食指"
+    ],
+    "image": null,
+    "answer": {
+      "index": 1,
+      "text": "右手中指"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 3,
+      "text": "右手食指"
+    },
+    "note": "晓戒指：小南·白虎·右手中指"
+  },
+  {
+    "no": 6,
+    "question": "【1X提供】千手柱间和宇智波斑小时候喜欢在一起玩什么？",
+    "options": [
+      "猜拳",
+      "丢沙包",
+      "跳皮筋",
+      "打水漂"
+    ],
+    "image": null,
+    "answer": {
+      "index": 3,
+      "text": "打水漂"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 0,
+      "text": "猜拳"
+    },
+    "note": "柱间和斑小时候在河边一起打水漂"
+  },
+  {
+    "no": 7,
+    "question": "【火柴提供】犬冢牙曾说谁作为自己人的时候很可靠？",
+    "options": [
+      "羽高",
+      "手鞠",
+      "我爱罗",
+      "勘九郎"
+    ],
+    "image": null,
+    "answer": {
+      "index": 2,
+      "text": "我爱罗"
+    },
+    "confidence": "medium",
+    "bonus_removed": {
+      "index": 0,
+      "text": "羽高"
+    },
+    "note": "原文/动画中牙认可我爱罗作为同伴很可靠；排除项为羽高"
+  },
+  {
+    "no": 8,
+    "question": "【天纵提供】二代火影千手扉间死于谁之手？",
+    "options": [
+      "宇智波斑",
+      "二代雷影",
+      "金角部队",
+      "二代水影"
+    ],
+    "image": null,
+    "answer": {
+      "index": 2,
+      "text": "金角部队"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 3,
+      "text": "二代水影"
+    },
+    "note": "千手扉间为掩护撤退，死于金角银角部队"
+  },
+  {
+    "no": 9,
+    "question": "【老鬼提供】“父亲大人，请您好好看着”是谁说的？",
+    "options": [
+      "日向花火",
+      "日向宁次",
+      "日向雏田",
+      "日向日差"
+    ],
+    "image": null,
+    "answer": {
+      "index": 1,
+      "text": "日向宁次"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 2,
+      "text": "日向雏田"
+    },
+    "note": "宁次对亡父日差说「父亲大人，请您好好看着」"
+  },
+  {
+    "no": 10,
+    "question": "【火柴提供】药师野乃宇曾经是？",
+    "options": [
+      "商人",
+      "修女",
+      "暗部成员",
+      "根的成员"
+    ],
+    "image": null,
+    "answer": {
+      "index": 3,
+      "text": "根的成员"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 2,
+      "text": "暗部成员"
+    },
+    "note": "药师野乃宇出身「根」，后经营孤儿院"
+  },
+  {
+    "no": 11,
+    "question": "【铁主提供】鸣人听信谁的话偷了封印之书？",
+    "options": [
+      "伊鲁卡",
+      "卡卡西",
+      "佐助",
+      "水木"
+    ],
+    "image": null,
+    "answer": {
+      "index": 3,
+      "text": "水木"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 0,
+      "text": "伊鲁卡"
+    },
+    "note": "水木怂恿鸣人偷封印之书"
+  },
+  {
+    "no": 12,
+    "question": "【铁主提供】下列哪只通灵兽是三代火影召唤过的？",
+    "options": [
+      "蛤蟆文",
+      "万蛇",
+      "猿魔",
+      "蛞蝓"
+    ],
+    "image": null,
+    "answer": {
+      "index": 2,
+      "text": "猿魔"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 3,
+      "text": "蛞蝓"
+    },
+    "note": "猿魔"
+  },
+  {
+    "no": 13,
+    "question": "【铁主提供】下列哪位忍者和小李一样擅长体术却不擅长忍术？",
+    "options": [
+      "油女取根",
+      "紫罗",
+      "山中风",
+      "志村团藏"
+    ],
+    "image": null,
+    "answer": {
+      "index": 1,
+      "text": "紫罗"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 3,
+      "text": "志村团藏"
+    },
+    "note": "紫罗：只修体术，不会忍术"
+  },
+  {
+    "no": 14,
+    "question": "【小鸡提供】六道仙人创造了？",
+    "options": [
+      "忍者",
+      "忍术",
+      "忍宗",
+      "忍猫"
+    ],
+    "image": null,
+    "answer": {
+      "index": 2,
+      "text": "忍宗"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 3,
+      "text": "忍猫"
+    },
+    "note": "六道仙人创立忍宗"
+  },
+  {
+    "no": 15,
+    "question": "【皮卡丘提供】忍界大战中三船阻止秽土迪达拉自爆用的是？",
+    "options": [
+      "雷遁忍者的查克拉",
+      "蓄电池",
+      "居合斩",
+      "黑土的溶遁"
+    ],
+    "image": null,
+    "answer": {
+      "index": 2,
+      "text": "居合斩"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 0,
+      "text": "雷遁忍者的查克拉"
+    },
+    "note": "三船以居合斩斩开秽土迪达拉，阻止自爆"
+  },
+  {
+    "no": 16,
+    "question": "【天纵提供】佐井擅长什么绘画风格?",
+    "options": [
+      "抽象画",
+      "油画",
+      "水彩画",
+      "水墨画"
+    ],
+    "image": null,
+    "answer": {
+      "index": 3,
+      "text": "水墨画"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 2,
+      "text": "水彩画"
+    },
+    "note": "佐井擅水墨画"
+  },
+  {
+    "no": 17,
+    "question": "【火柴提供】三代火影的妻子是被谁所杀？",
+    "options": [
+      "二代雷影",
+      "三代水影",
+      "山椒鱼半藏",
+      "带土"
+    ],
+    "image": null,
+    "answer": {
+      "index": 3,
+      "text": "带土"
+    },
+    "confidence": "medium",
+    "bonus_removed": {
+      "index": 1,
+      "text": "三代水影"
+    },
+    "note": "三代火影之妻（猿飞琵琶）死于九尾之乱，祸首为带土；排除项为三代水影"
+  },
+  {
+    "no": 18,
+    "question": "【火柴提供】动画中，多少考生进入了中忍考试第二关的死亡森林？",
+    "options": [
+      "88人",
+      "78人",
+      "75人",
+      "80人"
+    ],
+    "image": null,
+    "answer": {
+      "index": 1,
+      "text": "78人"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 0,
+      "text": "88人"
+    },
+    "note": "第二关开始时共 78 名考生进入死亡森林"
+  },
+  {
+    "no": 19,
+    "question": "【火柴提供】勘九郎靠什么线索追上带走我爱罗的迪达拉和蝎的？",
+    "options": [
+      "我爱罗的沙",
+      "迪达拉的黏土坐骑",
+      "迪达拉的脚印",
+      "蝎的脚印"
+    ],
+    "image": null,
+    "answer": {
+      "index": 0,
+      "text": "我爱罗的沙"
+    },
+    "confidence": "medium",
+    "bonus_removed": {
+      "index": 1,
+      "text": "迪达拉的黏土坐骑"
+    },
+    "note": "勘九郎沿散落的砂（我爱罗的沙）追踪；排除项为黏土坐骑"
+  },
+  {
+    "no": 20,
+    "question": "原作中，野原琳是几尾人柱力？",
+    "options": [
+      "3",
+      "5",
+      "4",
+      "2"
+    ],
+    "image": null,
+    "answer": {
+      "index": 0,
+      "text": "3"
+    },
+    "confidence": "high",
+    "bonus_removed": {
+      "index": 2,
+      "text": "4"
+    },
+    "note": "野原琳是三尾人柱力，对应选项「3」"
+  }
+]

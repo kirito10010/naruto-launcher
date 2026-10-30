@@ -1,0 +1,17 @@
+appId: com.example.hyol-online-server
+productName: HYOL-OnlineServer
+electronVersion: 11.5.0
+npmRebuild: false
+
+directories:
+  output: ../release-server
+  buildResources: .
+
+files:
+  - "**/*"
+
+# 用 zip：解压后双击 HYOL-OnlineServer.exe 即可运行（portable 单文件在本机测试无法启动，改用 zip）
+win:
+  target: zip
+  icon: ../resources/icons/Naruto.png
+  artifactName: "${productName}-${version}.${ext}"
