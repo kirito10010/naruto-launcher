@@ -26,10 +26,13 @@ const GH_LATEST = `https://github.com/${OWNER}/${REPO}/releases/latest/download`
 // 自建镜像地址（网站的「项目管理 → 版本发布」对外提供 latest.yml）
 // HYOL_UPDATE_MIRROR 仅用于本地联调
 const MIRROR = process.env.HYOL_UPDATE_MIRROR || 'http://49.235.142.253/api/release/public/naruto-launcher';
+// 腾讯云 COS 直链（国内镜像，带宽充足；按流量计费，比自建 6Mbps 服务器快很多）
+const COS_MIRROR = process.env.HYOL_UPDATE_COS || 'https://lijin-1301545439.cos.ap-shanghai.myqcloud.com/naruto-launcher';
 
 // 更新源候选表：顺序即优先级（版本相同时优先靠前的）
-// mirror: true 表示自建镜像，可在设置里切换「优先网站 / 优先 GitHub」
+// mirror: true 表示自建/国内镜像，可在设置里切换「优先国内镜像 / 优先 GitHub」
 const FEEDS = [
+  { name: '腾讯云 COS', url: COS_MIRROR, mirror: true },
   { name: '网站镜像', url: MIRROR, mirror: true },
   { name: 'GitHub 直连', url: GH_LATEST },
   { name: 'ghfast.top', url: 'https://ghfast.top/' + GH_LATEST },
@@ -53,7 +56,7 @@ let log = () => {};
 let currentVersion = '';
 let devTestMode = false;
 let feedIdx = 0;        // 当前选中的更新源下标
-let feedOrder = [];     // 本次检测的优先级顺序（按设置：网站优先 / GitHub 优先）
+let feedOrder = [];     // 本次检测的优先级顺序（按设置：国内镜像优先 / GitHub 优先）
 let orderPos = 0;       // 当前位于 feedOrder 的位置
 let getUpdateSource = () => 'mirror';   // 'mirror' | 'github'
 let retries = 0;
@@ -167,14 +170,14 @@ function cmpVersion(a, b) {
   return 0;
 }
 
-// 按设置计算优先级顺序：'mirror' = 网站优先，'github' = GitHub/代理优先（网站兜底）
+// 按设置计算优先级顺序：'mirror' = 国内镜像优先（COS → 网站），'github' = GitHub/代理优先（镜像兜底）
 function computeFeedOrder() {
-  const mirrorIdx = FEEDS.findIndex((f) => f.mirror);
-  const others = FEEDS.map((_, i) => i).filter((i) => i !== mirrorIdx);
-  if (mirrorIdx < 0) return others;
+  const mirrors = FEEDS.map((f, i) => (f.mirror ? i : -1)).filter((i) => i >= 0);
+  const others = FEEDS.map((_, i) => i).filter((i) => mirrors.indexOf(i) < 0);
+  if (!mirrors.length) return others;
   return getUpdateSource() === 'github'
-    ? others.concat([mirrorIdx])
-    : [mirrorIdx].concat(others);
+    ? others.concat(mirrors)
+    : mirrors.concat(others);
 }
 
 // 选源：并发拉各源的 latest.yml（跟随重定向拿正文），
@@ -397,7 +400,7 @@ function onError(e) {
 
   closeProgressWindow();
 
-  // 换下一个候选源重试：按本次检测的优先级顺序走（网站优先 / GitHub 优先）
+  // 换下一个候选源重试：按本次检测的优先级顺序走（国内镜像优先 / GitHub 优先）
   if (showError && retries < MAX_RETRY && orderPos < feedOrder.length - 1) {
     retries++;
     orderPos++;

@@ -35,7 +35,8 @@ function parseQuestion(buf) {
   const options = all(q, 3).map((v) => toText(v).trim()).filter(Boolean);
   if (!text || !options.length) return null;
   const img = one(q, 4);
-  const removed = one(q, 8);
+  // f8 可以出现多次：活动加成可能排除 1 项，也可能排除 2 项
+  const removedIdxs = q.filter(([k]) => k === 8).map(([, v]) => v).filter((v) => typeof v === 'number');
   const slots = [];
   for (const [k, v] of q) {
     if (k !== 7 || !Buffer.isBuffer(v)) continue;
@@ -52,7 +53,7 @@ function parseQuestion(buf) {
     question: text,
     options,
     imageId: img ? toText(img).trim() : '',
-    removedIdx: typeof removed === 'number' ? removed : -1,
+    removedIdxs: removedIdxs,
     slots
   };
 }
@@ -103,14 +104,14 @@ function parseMiao(rx, tx) {
     if (!e) {
       e = {
         no: qd.no, question: qd.question, options: qd.options,
-        imageId: qd.imageId, removedIdx: qd.removedIdx,
+        imageId: qd.imageId, removedIdxs: qd.removedIdxs || [],
         slots: qd.slots || [], choice: null, flag: null
       };
       map.set(key, e);
     }
     if (qd.no != null && e.no == null) e.no = qd.no;
     if (qd.imageId && !e.imageId) e.imageId = qd.imageId;
-    if (qd.removedIdx >= 0) e.removedIdx = qd.removedIdx;
+    if (qd.removedIdxs && qd.removedIdxs.length) e.removedIdxs = qd.removedIdxs;
     if ((!e.slots || !e.slots.length) && qd.slots && qd.slots.length) e.slots = qd.slots;
     return e;
   };
@@ -132,10 +133,11 @@ function parseMiao(rx, tx) {
   });
 
   // 第一遍：来源 A（NPC 加分）
+  const removedTextsOf = (e) => (e.removedIdxs || []).map((i) => e.options[i]).filter(Boolean);
   const ansAList = list.map((e, i) => {
-    const removedText = (e.removedIdx >= 0 && e.options[e.removedIdx]) ? e.options[e.removedIdx] : '';
+    const removed = removedTextsOf(e);
     const byNpc = deriveFromScores(e, list[i + 1]);
-    return (byNpc != null && e.options[byNpc] && e.options[byNpc] !== removedText) ? byNpc : null;
+    return (byNpc != null && e.options[byNpc] && removed.indexOf(e.options[byNpc]) < 0) ? byNpc : null;
   });
 
   // 来源 B 的可信度自检：f5 的对错含义必须在本场里被来源 A 验证过。
@@ -152,10 +154,10 @@ function parseMiao(rx, tx) {
   const bTrusted = bChecks > 0 && bBad === 0;
 
   const out = list.map((e, i) => {
-    const removedText = (e.removedIdx >= 0 && e.options[e.removedIdx]) ? e.options[e.removedIdx] : '';
+    const removedTexts = removedTextsOf(e);
     const ansA = ansAList[i];
     const ansB = (bTrusted && e.flag === true && typeof e.choice === 'number'
-      && e.options[e.choice] && e.options[e.choice] !== removedText) ? e.choice : null;
+      && e.options[e.choice] && removedTexts.indexOf(e.options[e.choice]) < 0) ? e.choice : null;
 
     let conflict = false;
     let ans = null;
@@ -171,7 +173,7 @@ function parseMiao(rx, tx) {
       question: e.question,
       options: e.options,
       answer: ans != null ? e.options[ans] : '',
-      bonusRemoved: removedText,
+      bonusRemoved: removedTexts,             // 数组：可能排除 1 项或 2 项
       image: '',
       imageId: e.imageId || '',               // 内部字段：配图查找用
       conflict
@@ -386,11 +388,15 @@ async function runMiaoExport(opts) {
   let error = '';
   let jsonl = null;
   let netlog = null;
+  let stats = null;
 
   try {
     netlog = await waitForNetlog(userData, opts && opts.mainPid);
-    const stream = extractGameStream(netlog);
+    // 优先选含喵问答命令号的 socket（zone 端口会变，不能再按端口找）
+    const stream = extractGameStream(netlog, [Q_MAIN, Q_PUSH]);
+    stats = stream.stats || null;
     list = parseMiao(stream.rx, stream.tx);
+    if (!list.length) error = '未在抓包里找到喵问答数据（本场可能没参加活动，或抓包模式未重启生效）';
     jsonl = findSessionJsonl(userData, netlog);
   } catch (e) {
     error = (e && e.message) || String(e);
@@ -431,6 +437,24 @@ async function runMiaoExport(opts) {
 
   const file = path.join(dir, 'questions.json');
   fs.writeFileSync(file, JSON.stringify(toOutput(list), null, 2), 'utf8');
+
+  // 没抓到任何题目时留一份诊断，方便排查（端口变化、没参加活动、模式没重启都写在这）
+  if (error) {
+    const lines = [];
+    lines.push('喵问答导出诊断');
+    lines.push('时间：' + new Date().toLocaleString());
+    lines.push('netlog：' + (netlog || '（未找到）'));
+    lines.push('题目数：' + list.length);
+    lines.push('错误：' + error);
+    if (stats && stats.length) {
+      lines.push('');
+      lines.push('socket 统计（按喵问答命令命中、帧数排序）：');
+      for (const s of stats) {
+        lines.push('  sock ' + s.id + ' ' + (s.addr || '') + '  帧=' + s.frames + '  命中=' + s.hits + '  rx=' + s.rxLen);
+      }
+    }
+    try { fs.writeFileSync(path.join(dir, '导出诊断.txt'), lines.join('\r\n'), 'utf8'); } catch (e) { /* ignore */ }
+  }
   try { shell.showItemInFolder(file); } catch (e) { /* ignore */ }
 
   return { file, count: list.length, error };

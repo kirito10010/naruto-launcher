@@ -75,6 +75,8 @@
       align-items: center;
       gap: 2px;
       overflow: hidden;
+      flex: 1;
+      min-width: 0;
       -webkit-app-region: no-drag;
     }
     .tabs-list {
@@ -82,10 +84,19 @@
       align-items: center;
       gap: 2px;
       overflow: hidden;
+      flex: 1;
+      min-width: 0;
+    }
+    /* 标签后的空白区域：可拖动窗口；drop 仍由外层 tabs-list 接管 */
+    .tabs-drag-fill {
+      flex: 1 1 0;
+      min-width: 8px;
+      align-self: stretch;
+      -webkit-app-region: drag;
     }
     .tab {
       height: 28px;
-      padding: 0 12px;
+      padding: 0 10px;
       border: 1px solid var(--btnBorder);
       border-radius: 999px;
       background: var(--btnBg);
@@ -96,8 +107,18 @@
       align-items: center;
       gap: 6px;
       white-space: nowrap;
-      max-width: 160px;
+      flex: 0 1 auto;
+      min-width: 76px;
+      max-width: 200px;
+      overflow: hidden;
       -webkit-app-region: no-drag;
+    }
+    .tab > span:first-child {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .tab:hover {
       background: var(--btnHover);
@@ -110,6 +131,7 @@
     .tab-close {
       font-size: 10px;
       opacity: 0.6;
+      flex: 0 0 auto;
     }
     .tab-close:hover {
       opacity: 1;
@@ -152,6 +174,34 @@
     }
     .tab-sidebar.visible {
       left: 0;
+    }
+    /* 侧边栏遮罩：盖住游戏区（工具栏以下），点击=优先关闭侧边栏 */
+    .sidebar-backdrop {
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: var(--toolbarHeight);
+      bottom: 0;
+      z-index: 800;
+      display: none;
+      background: transparent;
+    }
+    .sidebar-backdrop.open { display: block; }
+    body.fullscreen .sidebar-backdrop { top: 0; }
+    /* 标签拖拽反馈 */
+    .tab-placeholder { opacity: 0; pointer-events: none; }
+    .tab-drag-ghost { position: fixed !important; z-index: 3000; pointer-events: none; opacity: .96; margin: 0 !important; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+    .tab-drag-overlay { position: fixed; inset: 0; z-index: 1800; display: none; cursor: grabbing; }
+    .tab-drag-overlay.active { display: block; }
+    .tab.dragging, .tab-sidebar-item.dragging { opacity: .45; }
+    .tab-drop-line {
+      position: fixed;
+      z-index: 2000;
+      background: var(--accent);
+      border-radius: 3px;
+      pointer-events: none;
+      display: none;
+      box-shadow: 0 0 6px var(--shadow);
     }
     .tab-sidebar-header {
       display: flex;
@@ -350,12 +400,44 @@
       border-radius: 8px;
     }
     .help-close:hover { background: rgba(128,128,128,.16); }
-    .help-row {
-      font-size: 12.5px;
-      line-height: 1.7;
-      margin-bottom: 8px;
+    .help-sec { margin-bottom: 14px; }
+    .help-sec:last-child { margin-bottom: 0; }
+    .help-sec-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 5px;
     }
-    .help-row b { color: var(--accent); }
+    .help-desc {
+      font-size: 12.5px;
+      line-height: 1.65;
+      color: var(--sub);
+      margin: 0 0 6px;
+    }
+    .help-kv {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 12.5px;
+      line-height: 1.6;
+      margin: 4px 0;
+    }
+    .help-kv kbd, .help-sec-title kbd {
+      flex: 0 0 auto;
+      min-width: 88px;
+      padding: 2px 7px;
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      background: rgba(128,128,128,.12);
+      color: var(--text);
+      font-family: Consolas, 'Microsoft YaHei', monospace;
+      font-size: 11.5px;
+      text-align: center;
+      white-space: nowrap;
+    }
     .webview-wrap {
       flex: 1;
       min-height: 0;
@@ -474,9 +556,41 @@
       color: var(--sub);
       font-size: 11px;
     }
-    .account-sidebar-actions {
+    .account-sidebar-zone {
       display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 4px;
+      font-size: 11px;
+      min-width: 0;
+    }
+    .account-sidebar-zone-label { color: var(--sub); flex: 0 0 auto; }
+    .account-sidebar-zone-text {
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .account-zone-select {
+      flex: 1;
+      min-width: 0;
+      height: 22px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--btnBg);
+      color: var(--text);
+      font-size: 11px;
+      padding: 0 4px;
+      outline: none;
+    }
+    .account-sidebar-actions {
+      display: grid;
+      grid-template-columns: repeat(2, 22px);
+      grid-auto-rows: 22px;
       gap: 4px;
+      flex: 0 0 auto;
+      align-content: center;
+      margin-left: 8px;
       opacity: 0;
       transition: opacity 0.2s;
     }
@@ -484,15 +598,15 @@
       opacity: 1;
     }
     .account-sidebar-action-btn {
-      width: 24px;
-      height: 24px;
+      width: 22px;
+      height: 22px;
       border: none;
-      border-radius: 6px;
+      border-radius: 5px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 12px;
+      font-size: 11px;
       background: rgba(128,128,128,.18);
       color: var(--text);
     }
@@ -617,7 +731,6 @@
         <div class="mi" data-act="refresh">刷新（保留登录状态）</div>
         <div class="mi" data-act="tabmode" id="miTabMode">标签栏：侧边</div>
         <div class="mi" data-act="mute" id="miMute">静音：关</div>
-        <div class="mi" data-act="stretch" id="miStretch">拉伸模式：关</div>
         <div class="mi-sep"></div>
         <div class="mi" data-act="help">操作说明</div>
         <div class="mi" data-act="fullscreen">全屏（F11）</div>
@@ -631,6 +744,7 @@
   </div>
 
   <div class="webview-wrap" id="container"></div>
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
   <div class="tab-sidebar" id="tab-sidebar">
     <div class="tab-sidebar-header">
@@ -656,6 +770,39 @@
     const tabSidebarList = document.getElementById('tab-sidebar-list');
     const btnTabSidebar = document.getElementById('btn-tab-sidebar');
     const btnTabSidebarAdd = document.getElementById('tab-sidebar-add');
+    const accountSidebarEl = document.getElementById('account-sidebar');
+    const sidebarBackdrop = document.getElementById('sidebarBackdrop');
+    let openSidebar = null;   // 'tabs' | 'accounts' | null（两个侧边栏互斥）
+
+    // 统一开关侧边栏：传同一个值再调用一次 = 关闭；传 null = 关闭
+    function setSidebar(mode) {
+      const next = (openSidebar === mode) ? null : mode;
+      openSidebar = next;
+      tabSidebar.classList.toggle('visible', next === 'tabs');
+      if (accountSidebarEl) accountSidebarEl.classList.toggle('visible', next === 'accounts');
+      if (sidebarBackdrop) sidebarBackdrop.classList.toggle('open', !!next);
+      try { window.gameAPI.toggleSidebar(!!next); } catch (e) {}
+      if (next === 'accounts') {
+        try { window.gameAPI.getAccounts(); } catch (e) {}
+      }
+    }
+    if (sidebarBackdrop) {
+      sidebarBackdrop.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setSidebar(null);
+      });
+    }
+    // 点侧边栏和两个开关按钮以外的任何位置，也关闭侧边栏（工具栏区域走这里）
+    document.addEventListener('mousedown', (e) => {
+      if (!openSidebar) return;
+      const t = e.target;
+      if (!t || !t.closest) return;
+      if (t.closest('#tab-sidebar') || t.closest('#account-sidebar') ||
+          t.closest('#btn-tab-sidebar') || t.closest('#btn-accounts') ||
+          t.closest('#sidebarBackdrop')) return;
+      setSidebar(null);
+    }, true);
     const tabsContainer = document.getElementById('tabs-container');
     const tabsList = document.getElementById('tabs-list');
     const tabAddH = document.getElementById('tab-add-h');
@@ -665,7 +812,6 @@
     const moreBackdrop = document.getElementById('moreBackdrop');
     const miTabMode = document.getElementById('miTabMode');
     const miMute = document.getElementById('miMute');
-    const miStretch = document.getElementById('miStretch');
 
     let tabs = [];
     let activeTabId = null;
@@ -673,12 +819,18 @@
     let currentGame = null;
     let diskCache = true;
     let windowSlot = 1;   // 由主进程 game-info 下发：本窗口的会话槽位（避免多窗口共用同一 partition）
+    let fitLargeScreen = true;   // 大屏适配：按窗口等比放大游戏画面
+    let flashQuality = 'high';   // 游戏画面画质：high / medium / low
+    let dragState = null;        // 标签拖拽状态
     let isMuted = false;
     let tabCounter = 0;
     let currentSpeed = 1;
     let isWindowActive = true;
-    let stretchMode = false;
     let tabDisplayMode = 'sidebar';
+
+    function normalizeFlashQuality(v) {
+      return (v === 'low' || v === 'medium' || v === 'high') ? v : 'high';
+    }
 
     // IPC 通信
     const ipcRenderer = require('electron').ipcRenderer;
@@ -706,8 +858,11 @@
         ipcRenderer.send('remove-account', accountId);
       },
       // 启动账号
-      launchAccount: function(accountId) {
-        ipcRenderer.send('launch-account-window', accountId);
+      launchAccount: function(accountId, zoneId) {
+        ipcRenderer.send('launch-account-window', { accountId: accountId, zoneId: zoneId || '' });
+      },
+      setAccountZone: function(accountId, zoneId) {
+        ipcRenderer.send('set-account-zone', accountId, zoneId);
       },
       // 填充账号到当前标签
       fillAccount: function(accountId) {
@@ -722,6 +877,14 @@
       // 启动所有账号
       launchAllAccounts: function() {
         ipcRenderer.send('launch-all-accounts-window');
+      },
+      // 应用账号凭证（把 cookie 写回分区）
+      applyCredential: function(partition, credential) {
+        return ipcRenderer.invoke('apply-credential', partition, credential);
+      },
+      // 清除账号凭证
+      clearCredential: function(accountId, zoneId) {
+        return ipcRenderer.invoke('clear-credential', accountId, zoneId || '');
       },
       // 切换侧边栏
       toggleSidebar: function(visible) {
@@ -840,99 +1003,14 @@
       if (n) delete usedTabSlots[n];
     }
 
-    // ===== 拉伸模式（原生分辨率 / 跟随窗口拉伸）=====
-    const STRETCH_ENABLE_JS = [
-      '(function() {',
-      '  function doStretch() {',
-      '    var els = document.querySelectorAll("embed, object");',
-      '    var el = null, maxArea = 0, w = 0, h = 0;',
-      '    for (var i = 0; i < els.length; i++) {',
-      '      var ow = els[i].offsetWidth, oh = els[i].offsetHeight;',
-      '      var area = ow * oh;',
-      '      if (area > maxArea) { maxArea = area; el = els[i]; w = ow; h = oh; }',
-      '    }',
-      '    if (!el || !w || !h) return;',
-      '    var sx = window.innerWidth / w;',
-      '    var sy = window.innerHeight / h;',
-      '    if (sx <= 0 || sy <= 0) return;',
-      '    var key = sx.toFixed(4) + "x" + sy.toFixed(4);',
-      '    if (el.__narutoLastScale === key) return;',
-      '    el.__narutoLastScale = key;',
-      '    el.style.position = "fixed";',
-      '    el.style.left = "0px";',
-      '    el.style.top = "0px";',
-      '    el.style.zIndex = "2147483647";',
-      '    el.style.transformOrigin = "0 0";',
-      '    el.style.transform = "scale(" + sx + "," + sy + ")";',
-      '  }',
-      '  function schedule() {',
-      '    if (window.__narutoStretchRaf) return;',
-      '    window.__narutoStretchRaf = requestAnimationFrame(function () {',
-      '      window.__narutoStretchRaf = null;',
-      '      doStretch();',
-      '    });',
-      '  }',
-      '  if (!window.__narutoDoStretch) {',
-      '    window.__narutoDoStretch = doStretch;',
-      '    window.__narutoStretchSchedule = schedule;',
-      '    window.addEventListener("resize", schedule);',
-      '  }',
-      '  doStretch();',
-      // 只补跑有限次，覆盖 embed 晚出现的情况；不再每秒轮询（避免每秒强制 reflow）
-      '  [300, 1000, 2500, 5000].forEach(function (d) { setTimeout(doStretch, d); });',
-      '})();'
-    ].join('\n');
-
-    const STRETCH_DISABLE_JS = [
-      '(function() {',
-      '  var els = document.querySelectorAll("embed, object");',
-      '  for (var i = 0; i < els.length; i++) {',
-      '    var el = els[i];',
-      '    el.style.position = "";',
-      '    el.style.left = "";',
-      '    el.style.top = "";',
-      '    el.style.zIndex = "";',
-      '    el.style.transformOrigin = "";',
-      '    el.style.transform = "";',
-      '    el.__narutoLastScale = null;',
-      '  }',
-      '  if (window.__narutoStretchRaf) { cancelAnimationFrame(window.__narutoStretchRaf); window.__narutoStretchRaf = null; }',
-      '  if (window.__narutoStretchSchedule) {',
-      '    window.removeEventListener("resize", window.__narutoStretchSchedule);',
-      '    window.__narutoStretchSchedule = null;',
-      '  }',
-      '  window.__narutoDoStretch = null;',
-      '})();'
-    ].join('\n');
-
-    function applyStretchToWebview(webview, enable) {
+    // 画质切换 + wmode
+    // quality：活跃标签用启动器配置的画质，后台/失焦标签固定 low
+    // active：wmode 与画质解耦，活跃标签 direct（插件直绘最快），后台标签 opaque
+    function applyFlashQuality(webview, quality, active) {
       if (!webview) return;
-      const js = enable ? STRETCH_ENABLE_JS : STRETCH_DISABLE_JS;
-      try {
-        webview.executeJavaScript(js).catch(function() {});
-      } catch (e) {}
-    }
-
-    function setStretchMode(enabled) {
-      stretchMode = enabled;
-      if (miStretch) miStretch.textContent = '拉伸模式' + (enabled ? '：开' : '：关');
-      tabs.forEach(function(tab) {
-        if (tab._webview) {
-          applyStretchToWebview(tab._webview, enabled);
-          // wmode 取值依赖 stretchMode，切换拉伸后必须重刷画质
-          applyFlashQuality(tab._webview, tab.id === activeTabId ? 'high' : 'low');
-        }
-      });
-      try { window.gameAPI.setConfig('stretchMode', enabled); } catch (e) {}
-    }
-
-    // 后台标签画质降级 + wmode
-    function applyFlashQuality(webview, quality) {
-      if (!webview) return;
-      // 拉伸模式用 CSS transform 缩放 → 插件必须走合成器(opaque)，否则与 wmode=direct 冲突；
-      // 非拉伸时激活标签用 direct（插件直绘，最快），后台/隐藏标签用 opaque
-      const wmode = (stretchMode || quality === 'low') ? 'opaque' : 'direct';
-      const js = '(function(){ var els = document.querySelectorAll("embed, object"); for (var i=0;i<els.length;i++){ try { els[i].setAttribute("quality", "low"); els[i].setAttribute("wmode", "' + wmode + '"); } catch(e){} } })();';
+      const wmode = active ? 'direct' : 'opaque';
+      const q = (quality === 'low' || quality === 'medium') ? quality : 'high';
+      const js = '(function(){ var els = document.querySelectorAll("embed, object"); for (var i=0;i<els.length;i++){ try { els[i].setAttribute("quality", "' + q + '"); els[i].setAttribute("wmode", "' + wmode + '"); } catch(e){} } })();';
       try {
         webview.executeJavaScript(js).catch(function () {});
       } catch (e) {}
@@ -1028,14 +1106,33 @@
     }
 
     // 创建 webview
-    function createWebview(tab) {
+    async function createWebview(tab) {
+      // 凭证直连：先把 cookie 写回该账号分区，再直接打开登录成功时的地址（跳过登录页）
+      const pending = tab._pendingAccount;
+      const zoneLoginUrl = pending && pending.credential && pending.credential.login_url ? pending.credential.login_url : '';
+      let cred = (pending && pending.credential && pending.credential.login_url &&
+        (!pending.credential.expires_at || new Date(pending.credential.expires_at).getTime() > Date.now()))
+        ? pending.credential : null;
+      if (cred) {
+        let ok = false;
+        try { ok = await window.gameAPI.applyCredential(getPartition(tab), cred); } catch (e) { ok = false; }
+        if (!ok) cred = null;
+      }
+      tab._usingCredential = !!cred;
+
       const webview = document.createElement('webview');
-      webview.src = currentGame ? currentGame.url : 'https://huoying.qq.com/';
       webview.setAttribute('plugins', '');
       // 不设置 allowpopups，阻止 window.open 弹窗
       webview.setAttribute('partition', getPartition(tab));
       // nativeWindowOpen=no 阻止原生窗口打开
       webview.setAttribute('webpreferences', 'allowRunningInsecureContent=yes,webSecurity=no,nativeWindowOpen=no,backgroundThrottling=no');
+      // Flash 的 quality 必须在 embed 创建前改好：按配置挂 preload（主 frame）
+      // QQ游戏大厅入口的内嵌 iframe 由主进程 CDP 注入兜底
+      if (flashQuality === 'low' || flashQuality === 'medium') {
+        const preloadFile = flashQuality === 'low' ? 'flash-quality-low-preload.js' : 'flash-quality-medium-preload.js';
+        webview.setAttribute('preload', new URL(preloadFile, document.baseURI).href);
+      }
+      webview.src = cred ? cred.login_url : (zoneLoginUrl || (currentGame ? currentGame.url : 'https://huoying.qq.com/'));
       webview.dataset.tabId = tab.id;
 
       if (tab.id !== activeTabId) {
@@ -1058,6 +1155,19 @@
       });
 
       webview.addEventListener('did-navigate', (e) => {
+        // 凭证直连后如果被重定向到登录页 → 凭证失效：清掉并回退官方登录
+        if (tab._usingCredential && isLoginPage(e.url)) {
+          tab._usingCredential = false;
+          const acc = tab._pendingAccount;
+          if (acc && acc.id) {
+            try { window.gameAPI.clearCredential(acc.id); } catch (err) {}
+            if (acc.credential) delete acc.credential;
+          }
+          setTimeout(() => {
+            try { webview.loadURL(currentGame ? currentGame.url : 'https://huoying.qq.com/'); } catch (err) {}
+          }, 120);
+          return;
+        }
         tryPendingInject(tab);
       });
 
@@ -1065,12 +1175,28 @@
         tryPendingInject(tab);
       });
 
+      // QQ游戏大厅入口把游戏放在 iframe 里，iframe 导航时也要重新注入原生尺寸适配
+      webview.addEventListener('did-frame-navigate', () => {
+        applyViewportZoom();
+      });
+
       webview.addEventListener('did-stop-loading', () => {
         tryPendingInject(tab);
-        applyFlashQuality(webview, tab.id === activeTabId ? 'high' : 'low');
-        if (stretchMode) {
-          applyStretchToWebview(webview, true);
-        }
+        // 大屏适配：游戏舞台按窗口原生尺寸渲染
+        applyViewportZoom();
+        // QQ游戏大厅入口被拦（403 Forbidden）时，自动回退到官网入口，避免停在错误页
+        try {
+          const cur = webview.getURL() || '';
+          if (/social_hall\/app_frame/i.test(cur)) {
+            webview.executeJavaScript('(document.body && document.body.innerText || "").slice(0, 80)').then(function (txt) {
+              if (txt && txt.indexOf('Forbidden') >= 0) {
+                window.gameAPI.debugLog('warn', 'load', 'QQ游戏大厅入口被拒绝(403)，自动回退官网入口');
+                try { webview.loadURL('https://huoying.qq.com/'); } catch (e) {}
+              }
+            }).catch(function () {});
+          }
+        } catch (e) {}
+        applyFlashQuality(webview, tab.id === activeTabId ? flashQuality : 'low', tab.id === activeTabId);
       });
 
       webview.addEventListener('did-start-loading', () => {
@@ -1116,6 +1242,7 @@
         name: name || '窗口' + (tabs.length + 1),
         _webview: null,
         _pendingAccount: account || null,
+        _account: account || null,
         _injectTimer: null
       };
 
@@ -1161,9 +1288,10 @@
 
       tabs.splice(idx, 1);
 
-      // 如果没有标签了，关闭窗口
+      // 关闭最后一个标签时不关窗口，自动补一个新标签
       if (tabs.length === 0) {
-        window.gameAPI.closeWindow();
+        activeTabId = null;
+        addTab();
         return;
       }
 
@@ -1195,13 +1323,13 @@
       if (prevTab && prevTab._webview) {
         prevTab._webview.classList.add('hidden');
         try { prevTab._webview.setAudioMuted(true); } catch (e) {}
-        applyFlashQuality(prevTab._webview, 'low');
+        applyFlashQuality(prevTab._webview, 'low', false);
         setTabThrottle(prevTab, true);   // 冻结旧标签
       }
       if (nextTab && nextTab._webview) {
         nextTab._webview.classList.remove('hidden');
         try { nextTab._webview.setAudioMuted(isMuted); } catch (e) {}
-        applyFlashQuality(nextTab._webview, 'high');
+        applyFlashQuality(nextTab._webview, flashQuality, true);
         setTabThrottle(nextTab, false);  // 新标签全速
       }
 
@@ -1217,27 +1345,337 @@
         const item = document.createElement('div');
         item.className = 'tab-sidebar-item' + (tab.id === activeTabId ? ' active' : '');
         item.dataset.tab = tab.index;
+        item.dataset.tabId = tab.id;
         item.innerHTML = '<span class="tab-sidebar-name">' + escapeHtml(tab.name) + '</span><span class="tab-sidebar-close" data-tab="' + tab.index + '">×</span>';
+        bindTabDrag(item, tab);
         tabSidebarList.appendChild(item);
 
         const tabEl = document.createElement('div');
         tabEl.className = 'tab' + (tab.id === activeTabId ? ' active' : '');
         tabEl.dataset.tab = tab.index;
+        tabEl.dataset.tabId = tab.id;
+        tabEl.title = tab.name;
         tabEl.innerHTML = '<span>' + escapeHtml(tab.name) + '</span><span class="tab-close" data-tab="' + tab.index + '">×</span>';
+        bindTabDrag(tabEl, tab);
         tabsList.appendChild(tabEl);
       });
+
+      // 标签后的空白填充：留出可拖动窗口的区域（不算拖拽项）
+      const dragFill = document.createElement('div');
+      dragFill.className = 'tabs-drag-fill';
+      tabsList.appendChild(dragFill);
     }
+
+    // 拖拽：同一栏内拖动 = 调整顺序（不拆窗口）
+    let dropLineEl = null;
+    function getDropLine() {
+      if (!dropLineEl) {
+        dropLineEl = document.createElement('div');
+        dropLineEl.className = 'tab-drop-line';
+        document.body.appendChild(dropLineEl);
+      }
+      return dropLineEl;
+    }
+    function hideDropLine() { if (dropLineEl) dropLineEl.style.display = 'none'; }
+
+    // 计算插入位置时排除正在拖动的标签，否则第一项往下拖会被 `from < insertIndex` 抵消
+    function getDragItems(listEl) {
+      return Array.prototype.slice.call(listEl.children).filter(function (x) {
+        return x.dataset && x.dataset.tabId && (!dragState || x.dataset.tabId !== dragState.tabId);
+      });
+    }
+
+    function computeDropIndex(listEl, vertical, clientX, clientY) {
+      const items = getDragItems(listEl);
+      const rect = listEl.getBoundingClientRect();
+      const pos = vertical ? clientY : clientX;
+      let idx = items.length;
+      for (let i = 0; i < items.length; i++) {
+        const r = items[i].getBoundingClientRect();
+        const mid = vertical ? (r.top + r.height / 2) : (r.left + r.width / 2);
+        if (pos < mid) { idx = i; break; }
+      }
+      return { idx: idx, items: items, rect: rect };
+    }
+
+    function showDropLine(listEl, vertical, info) {
+      const line = getDropLine();
+      const items = info.items;
+      const rect = info.rect;
+      line.style.display = 'block';
+      if (vertical) {
+        // 侧边栏是竖排：画一条横线
+        let y;
+        if (!items.length) y = rect.top + 10;
+        else if (info.idx <= 0) y = items[0].getBoundingClientRect().top - 2;
+        else if (info.idx >= items.length) y = items[items.length - 1].getBoundingClientRect().bottom + 1;
+        else y = (items[info.idx - 1].getBoundingClientRect().bottom + items[info.idx].getBoundingClientRect().top) / 2;
+        line.style.left = (rect.left + 8) + 'px';
+        line.style.top = (y - 1) + 'px';
+        line.style.width = Math.max(40, rect.width - 16) + 'px';
+        line.style.height = '3px';
+      } else {
+        // 顶栏是横排：画一条竖线（和 Chrome 一样）
+        let x;
+        if (!items.length) x = rect.left + 4;
+        else if (info.idx <= 0) x = items[0].getBoundingClientRect().left - 2;
+        else if (info.idx >= items.length) x = items[items.length - 1].getBoundingClientRect().right + 1;
+        else x = (items[info.idx - 1].getBoundingClientRect().right + items[info.idx].getBoundingClientRect().left) / 2;
+        const h = items.length ? items[0].getBoundingClientRect().height : rect.height;
+        line.style.left = (x - 1) + 'px';
+        line.style.top = (rect.top + (rect.height - h) / 2) + 'px';
+        line.style.width = '3px';
+        line.style.height = h + 'px';
+      }
+    }
+
+    function bindTabDrag(el, tab) {
+      el.draggable = true;
+      el.addEventListener('dragstart', function (e) {
+        const r = el.getBoundingClientRect();
+        dragState = { tabId: tab.id, dropped: false, hidePending: true, over: null, preview: null, lastX: e.clientX, lastY: e.clientY, sourceEl: el, placeholder: null };
+        dragState.prevActiveEls = Array.prototype.slice.call(document.querySelectorAll('.tab.active, .tab-sidebar-item.active')).filter(function (x) { return x !== el; });
+        dragState.prevActiveEls.forEach(function (x) { x.classList.remove('active'); });
+        if (!el.classList.contains('active')) { el.classList.add('active'); dragState.sourceActiveAdded = true; }
+        try {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', tab.id);
+          // 原生拖拽图设为透明，改用下面自己画的 ghost，才能把它限制在标签栏内
+          const blank = document.createElement('img');
+          blank.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+          blank.style.position = 'fixed';
+          blank.style.left = '-10px';
+          blank.style.top = '-10px';
+          blank.style.width = '1px';
+          blank.style.height = '1px';
+          document.body.appendChild(blank);
+          e.dataTransfer.setDragImage(blank, 0, 0);
+          setTimeout(function () { if (blank.parentNode) blank.parentNode.removeChild(blank); }, 0);
+        } catch (err) {}
+        // 插入一个同尺寸占位块，再把原标签隐藏：拖动时其它标签会实时让位
+        const cs = window.getComputedStyle(el);
+        const ph = document.createElement('div');
+        ph.className = 'tab-placeholder';
+        ph.style.width = r.width + 'px';
+        ph.style.height = r.height + 'px';
+        ph.style.flex = '0 0 auto';
+        ph.style.margin = cs.margin;
+        ph.style.boxSizing = 'border-box';
+        dragState.placeholder = ph;
+        // 跟随鼠标的 ghost（只允许在标签栏矩形内移动）
+        const ghost = el.cloneNode(true);
+        ghost.classList.add('tab-drag-ghost');
+        ghost.classList.add('active');
+        ghost.classList.remove('hidden', 'dragging');
+        ghost.style.width = r.width + 'px';
+        ghost.style.height = r.height + 'px';
+        ghost.style.left = r.left + 'px';
+        ghost.style.top = r.top + 'px';
+        ghost.style.boxSizing = 'border-box';
+        ghost.style.margin = '0';
+        document.body.appendChild(ghost);
+        dragState.ghost = ghost;
+        dragState.ghostW = r.width;
+        dragState.ghostH = r.height;
+        dragState.grabDX = e.clientX - r.left;
+        dragState.grabDY = e.clientY - r.top;
+        el.classList.add('dragging');
+      });
+      el.addEventListener('dragend', function (e) {
+        el.classList.remove('dragging');
+        cleanupDragPlaceholder();
+        hideDropLine();
+        const st = dragState;
+        dragState = null;
+        if (!st || st.dropped) return;
+        // 偶尔 drop 事件没触发：只要最终位置还在标签栏里，就按最后预览的位置排序；栏外松手则不动
+        if (st.over) {
+          const r = st.over.rect;
+          const fx = (e && typeof e.clientX === 'number') ? e.clientX : st.lastX;
+          const fy = (e && typeof e.clientY === 'number') ? e.clientY : st.lastY;
+          if (fx >= r.left && fx <= r.right && fy >= r.top && fy <= r.bottom) {
+            reorderTab(st.tabId, (st.preview && st.preview.listEl === st.over.listEl) ? st.preview.idx : st.over.idx);
+            if (activeTabId !== st.tabId) switchTab(st.tabId);
+          }
+        }
+
+      });
+    }
+
+    function cleanupDragPlaceholder() {
+      const st = dragState;
+      if (!st) return;
+      if (st.placeholder && st.placeholder.parentNode) st.placeholder.parentNode.removeChild(st.placeholder);
+      if (st.sourceEl) st.sourceEl.style.display = '';
+      st.placeholder = null;
+      if (st.ghost && st.ghost.parentNode) st.ghost.parentNode.removeChild(st.ghost);
+      hideDragOverlay();
+      st.ghost = null;
+      if (st.sourceActiveAdded && st.sourceEl) st.sourceEl.classList.remove('active');
+      if (st.prevActiveEls) st.prevActiveEls.forEach(function (x) { if (x && x.parentNode) x.classList.add('active'); });
+    }
+
+    let dragOverlayEl = null;
+    function getDragOverlay() {
+      if (!dragOverlayEl) {
+        dragOverlayEl = document.createElement('div');
+        dragOverlayEl.className = 'tab-drag-overlay';
+        dragOverlayEl.addEventListener('dragover', onOverlayDragOver);
+        dragOverlayEl.addEventListener('drop', onOverlayDrop);
+        document.body.appendChild(dragOverlayEl);
+      }
+      return dragOverlayEl;
+    }
+    function showDragOverlay() { getDragOverlay().classList.add('active'); }
+    function hideDragOverlay() { if (dragOverlayEl) dragOverlayEl.classList.remove('active'); }
+
+    function updateDragAt(listEl, vertical, clientX, clientY) {
+      if (!dragState) return;
+      if (dragState.hidePending) {
+        dragState.hidePending = false;
+        const src = dragState.sourceEl;
+        const ph = dragState.placeholder;
+        if (src && ph && src.parentNode) {
+          src.parentNode.insertBefore(ph, src);
+          src.style.display = 'none';
+        }
+      }
+      // ghost 只夹在源标签栏内，鼠标跑到游戏画面时它停在边缘
+      if (dragState.ghost) {
+        const src = dragState.sourceEl;
+        const lr = (src && src.parentNode ? src.parentNode : listEl).getBoundingClientRect();
+        let left = clientX - dragState.grabDX;
+        let top = clientY - dragState.grabDY;
+        left = Math.max(lr.left, Math.min(left, lr.right - dragState.ghostW));
+        top = Math.max(lr.top, Math.min(top, lr.bottom - dragState.ghostH));
+        dragState.ghost.style.left = left + 'px';
+        dragState.ghost.style.top = top + 'px';
+      }
+      // 鼠标在栏外时 computeDropIndex 会自然夹到第一/最后，拖动不会中断
+      const info = computeDropIndex(listEl, vertical, clientX, clientY);
+      dragState.lastX = clientX;
+      dragState.lastY = clientY;
+      dragState.over = { listEl: listEl, vertical: vertical, idx: info.idx, rect: info.rect };
+      if (dragState.placeholder && dragState.placeholder.parentNode === listEl) {
+        listEl.insertBefore(dragState.placeholder, info.items[info.idx] || null);
+        dragState.preview = { listEl: listEl, idx: info.idx };
+        hideDropLine();
+      } else {
+        showDropLine(listEl, vertical, info);
+      }
+    }
+
+    function finishDrag() {
+      if (!dragState) return;
+      const st = dragState;
+      st.dropped = true;
+      const idx = st.preview ? st.preview.idx : (st.over ? st.over.idx : 0);
+      cleanupDragPlaceholder();
+      hideDropLine();
+      hideDragOverlay();
+      reorderTab(st.tabId, idx);
+      if (activeTabId !== st.tabId) switchTab(st.tabId);
+    }
+
+    function onOverlayDragOver(e) {
+      if (!dragState) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
+      const src = dragState.sourceEl;
+      if (!src || !src.parentNode) return;
+      const listEl = src.parentNode;
+      updateDragAt(listEl, listEl === tabSidebarList, e.clientX, e.clientY);
+    }
+
+    function onOverlayDrop(e) {
+      if (!dragState) return;
+      e.preventDefault();
+      finishDrag();
+    }
+
+    function bindDropZone(listEl, vertical) {
+      listEl.addEventListener('dragover', function (e) {
+        if (!dragState) return;
+        e.preventDefault();
+        try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
+        // 第一次进入列表后，用全屏透明遮罩接管拖拽：鼠标移到游戏画面上也能继续跟踪
+        showDragOverlay();
+        updateDragAt(listEl, vertical, e.clientX, e.clientY);
+      });
+      listEl.addEventListener('drop', function (e) {
+        if (!dragState) return;
+        e.preventDefault();
+        finishDrag();
+      });
+    }
+
+    function reorderTab(tabId, insertIndex) {
+      const from = tabs.findIndex(function (t) { return t.id === tabId; });
+      if (from < 0) return;
+      const moved = tabs.splice(from, 1)[0];
+      // insertIndex 已经是「排除被拖动项之后」的位置，直接插入即可
+      const idx = Math.max(0, Math.min(tabs.length, insertIndex));
+      tabs.splice(idx, 0, moved);
+      tabs.forEach(function (t, i) { t.index = i + 1; });
+      renderTabs();
+    }
+
+    bindDropZone(tabSidebarList, true);
+    bindDropZone(tabsList, false);
 
     function setTabDisplayMode(mode) {
       tabDisplayMode = mode;
       const isTaskbar = (mode === 'taskbar');
       tabsContainer.style.display = isTaskbar ? 'flex' : 'none';
-      tabSidebar.classList.remove('visible');
+      if (openSidebar === 'tabs') setSidebar(null);
       btnTabSidebar.style.display = isTaskbar ? 'none' : '';
       if (miTabMode) miTabMode.textContent = '标签栏：' + (isTaskbar ? '顶栏' : '侧边');
     }
 
-    // 账号侧边栏
+    // 账号侧边栏（同一 QQ 支持多区服凭证）
+    function accountZoneKey(c) { return String((c && (c.zone_id || 'default')) || 'default'); }
+    function accountZoneName(c) { return (c && (c.zone_name || c.zone_id)) || '默认区'; }
+    // 顶栏标签只需要区服短名：优先取「1098区」这类前缀，避免完整区服名把标签撑长
+    function shortZoneName(name) {
+      const s = String(name || '').trim();
+      const m = s.match(/(\d+\s*区)/);
+      if (m) return m[1].replace(/\s+/g, '');
+      return s.length > 6 ? s.slice(0, 6) : s;
+    }
+    // 账号标签短名：QQ 前四位 + 区服，如 3025-1098区
+    function accountTabName(account, zoneName) {
+      const qq = String((account && account.qq) || '').trim();
+      const prefix = qq ? qq.slice(0, 4) : ((account && account.windowName) || '窗口');
+      const zone = shortZoneName(zoneName);
+      return zone ? (prefix + '-' + zone) : prefix;
+    }
+    function accountZoneList(a) {
+      const map = (a && a.credentials && typeof a.credentials === 'object') ? a.credentials : {};
+      let list = Object.keys(map).map(k => map[k]).filter(c => c && (c.login_url || c.zone_id || c.zone_name));
+      if (!list.length && a && a.credential && a.credential.login_url) list.push(a.credential);
+      const seen = {};
+      list = list.filter(c => { const k = accountZoneKey(c); if (seen[k]) return false; seen[k] = true; return true; });
+      const last = String((a && a.lastZoneId) || '');
+      list.sort((x, y) => {
+        const xk = accountZoneKey(x), yk = accountZoneKey(y);
+        if (last && xk === last) return -1;
+        if (last && yk === last) return 1;
+        const xt = x.captured_at ? new Date(x.captured_at).getTime() : 0;
+        const yt = y.captured_at ? new Date(y.captured_at).getTime() : 0;
+        return yt - xt;
+      });
+      return list;
+    }
+    function zoneCredStatus(cred) {
+      if (!cred || !cred.login_url) return { valid: false, text: '凭证：无', short: '无' };
+      const exp = cred.expires_at ? new Date(cred.expires_at).getTime() : 0;
+      if (!exp || exp > Date.now()) {
+        const h = exp ? Math.max(0, Math.round((exp - Date.now()) / 3600000)) : 0;
+        return { valid: true, text: '凭证：有效' + (h ? ' ' + h + ' 小时' : ''), short: h ? '有效 ' + h + 'h' : '有效' };
+      }
+      return { valid: false, text: '凭证：已过期', short: '已过期' };
+    }
+
     function renderAccountSidebar() {
       const list = document.getElementById('account-sidebar-list');
       const items = accounts.filter(a => a.qq);
@@ -1250,13 +1688,40 @@
       let html = '';
       items.forEach(function(a) {
         const winName = a.windowName || a.qq;
+        const zones = accountZoneList(a);
+        const lastKey = String(a.lastZoneId || '');
+        const selected = zones.find(z => accountZoneKey(z) === lastKey) || zones[0] || null;
+        const selectedKey = selected ? accountZoneKey(selected) : '';
+        const st = zoneCredStatus(selected);
+        let zoneHtml = '';
+        if (zones.length > 1) {
+          zoneHtml = '<div class="account-sidebar-zone">' +
+            '<span class="account-sidebar-zone-label">区服</span>' +
+            '<select class="account-zone-select" data-account-id="' + a.id + '">' +
+            zones.map(function(z) {
+              const zk = accountZoneKey(z);
+              const zs = zoneCredStatus(z);
+              return '<option value="' + escapeHtml(zk) + '"' + (zk === selectedKey ? ' selected' : '') + '>' +
+                escapeHtml(accountZoneName(z)) + '（' + escapeHtml(zs.short) + '）</option>';
+            }).join('') +
+            '</select>' +
+          '</div>';
+        } else if (zones.length === 1) {
+          zoneHtml = '<div class="account-sidebar-zone"><span class="account-sidebar-zone-label">区服</span><span class="account-sidebar-zone-text">' + escapeHtml(accountZoneName(zones[0])) + '</span></div>';
+        }
+        const clearBtn = (selected && selected.login_url)
+          ? '<button class="account-sidebar-action-btn" data-clear-cred-id="' + a.id + '" data-clear-zone="' + escapeHtml(selectedKey) + '" title="清除当前区服凭证">⌫</button>'
+          : '';
         html += '<div class="account-sidebar-item" data-account-id="' + a.id + '">' +
           '<div class="account-sidebar-info">' +
             '<div class="account-sidebar-win-name">' + escapeHtml(winName) + '</div>' +
             '<span class="account-sidebar-qq">' + escapeHtml(a.qq) + '</span>' +
+            zoneHtml +
+            '<span style="display:block;font-size:11px;color:' + (st.valid ? '#0f766e' : '#94a3b8') + '">' + escapeHtml(st.text) + '</span>' +
           '</div>' +
           '<div class="account-sidebar-actions">' +
-            '<button class="account-sidebar-action-btn open" data-open-id="' + a.id + '" title="开窗并登录">⊞</button>' +
+            '<button class="account-sidebar-action-btn open" data-open-id="' + a.id + '" data-open-zone="' + escapeHtml(selectedKey) + '" title="开窗并登录">⊞</button>' +
+            clearBtn +
             '<button class="account-sidebar-action-btn edit" data-edit-id="' + a.id + '" title="编辑">✏</button>' +
             '<button class="account-sidebar-action-btn delete" data-delete-id="' + a.id + '" title="删除">✕</button>' +
           '</div>' +
@@ -1358,7 +1823,7 @@
     });
 
     btnTabSidebar.addEventListener('click', () => {
-      tabSidebar.classList.toggle('visible');
+      setSidebar('tabs');
     });
 
     tabSidebarList.addEventListener('click', (e) => {
@@ -1441,14 +1906,26 @@
         '<div class="help-card">' +
           '<div class="help-head"><span>操作说明</span><button class="help-close" id="helpClose">&#10005;</button></div>' +
           '<div class="help-body">' +
-            '<div class="help-row"><b>账号管理</b>：点顶部 <b>&#128100;</b> 打开账号侧栏，可添加/编辑账号；点「一键启动」批量多开。</div>' +
-            '<div class="help-row"><b>变速</b>：顶部「变速」下拉，1x 还原，2x/4x/6x/10x/20x 加速，0.5x 减速。</div>' +
-            '<div class="help-row"><b>标签栏</b>：点 <b>&#9776;</b> 打开标签侧栏；「&#8943; → 标签栏」切换 侧边/顶栏 显示。</div>' +
-            '<div class="help-row"><b>刷新</b>：「&#8943; → 刷新」重新加载页面并保留登录状态。</div>' +
-            '<div class="help-row"><b>静音</b>：「&#8943; → 静音」一键静音全部标签。</div>' +
-            '<div class="help-row"><b>拉伸模式</b>：「&#8943; → 拉伸模式」在 原生分辨率 / 跟随窗口拉伸 间切换。</div>' +
-            '<div class="help-row"><b>全屏</b>：按 <b>F11</b> 或「&#8943; → 全屏」进入全屏（隐藏顶部栏），再按一次退出。</div>' +
-            '<div class="help-row"><b>多开</b>：每个标签独立登录，互不影响。</div>' +
+            '<div class="help-sec">' +
+              '<div class="help-sec-title">标签栏<kbd>Alt+L</kbd></div>' +
+              '<div class="help-desc">点顶部 ☰ 打开；拖动标签可排序。</div>' +
+              '<div class="help-kv"><kbd>Alt+1~9</kbd><span>切换到对应标签</span></div>' +
+              '<div class="help-kv"><kbd>Ctrl+Tab</kbd><span>下一个标签（加 Shift 反过来）</span></div>' +
+              '<div class="help-kv"><kbd>Ctrl+T</kbd><span>新建标签</span></div>' +
+              '<div class="help-kv"><kbd>Ctrl+W</kbd><span>关闭当前标签</span></div>' +
+            '</div>' +
+            '<div class="help-sec">' +
+              '<div class="help-sec-title">账号<kbd>Alt+A</kbd></div>' +
+              '<div class="help-desc">点顶部 👤 打开；登录一次会自动记住凭证，下次点账号直接进游戏。同一个 QQ 进过多个区时，账号栏会出现区服下拉，先选区再点开窗。</div>' +
+            '</div>' +
+            '<div class="help-sec">' +
+              '<div class="help-sec-title">窗口</div>' +
+              '<div class="help-kv"><kbd>F11</kbd><span>全屏 / 退出全屏</span></div>' +
+              '<div class="help-kv"><kbd>F5</kbd><span>刷新（保留登录状态）</span></div>' +
+              '<div class="help-kv"><kbd>Alt+M</kbd><span>静音 / 取消静音</span></div>' +
+              '<div class="help-kv"><kbd>Alt+S</kbd><span>打开更多菜单</span></div>' +
+              '<div class="help-kv"><kbd>Esc</kbd><span>关闭弹层 / 菜单 / 侧边栏；全部关闭后再按会转给游戏关闭内部窗口</span></div>' +
+            '</div>' +
           '</div>' +
         '</div>';
       document.body.appendChild(mask);
@@ -1490,8 +1967,6 @@
         setTabDisplayMode(tabDisplayMode === 'sidebar' ? 'taskbar' : 'sidebar');
       } else if (act === 'mute') {
         toggleMute();
-      } else if (act === 'stretch') {
-        setStretchMode(!stretchMode);
       } else if (act === 'help') {
         openHelp();
       } else if (act === 'fullscreen') {
@@ -1503,23 +1978,11 @@
     document.getElementById('btn-accounts').addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-
-      const sidebar = document.getElementById('account-sidebar');
-      const isVisible = sidebar.classList.contains('visible');
-
-      if (isVisible) {
-        sidebar.classList.remove('visible');
-        window.gameAPI.toggleSidebar(false);
-      } else {
-        sidebar.classList.add('visible');
-        window.gameAPI.toggleSidebar(true);
-        window.gameAPI.getAccounts();
-      }
+      setSidebar('accounts');
     });
 
     document.getElementById('accountSidebarClose').addEventListener('click', () => {
-      document.getElementById('account-sidebar').classList.remove('visible');
-      window.gameAPI.toggleSidebar(false);
+      setSidebar(null);
     });
 
     document.getElementById('accountSidebarAdd').addEventListener('click', showNewAccountModal);
@@ -1534,7 +1997,10 @@
       if (target.classList.contains('open') || target.closest('.open')) {
         const btn = target.classList.contains('open') ? target : target.closest('.open');
         const accountId = btn.dataset.openId;
-        window.gameAPI.launchAccount(accountId);
+        const item = btn.closest(".account-sidebar-item");
+        const sel = item ? item.querySelector(".account-zone-select") : null;
+        const zoneId = sel ? sel.value : (btn.dataset.openZone || "");
+        window.gameAPI.launchAccount(accountId, zoneId);
         return;
       }
 
@@ -1550,6 +2016,14 @@
         return;
       }
 
+      if (target.dataset.clearCredId || target.closest('[data-clear-cred-id]')) {
+        const btn = target.dataset.clearCredId ? target : target.closest('[data-clear-cred-id]');
+        try { window.gameAPI.clearCredential(btn.dataset.clearCredId, btn.dataset.clearZone || ''); } catch (err) {}
+        return;
+      }
+
+      if (target.closest('.account-zone-select') || target.closest('.account-sidebar-zone')) return;
+
       const item = target.closest('.account-sidebar-item');
       if (item) {
         const accountId = item.dataset.accountId;
@@ -1557,10 +2031,28 @@
       }
     });
 
+    document.getElementById('account-sidebar-list').addEventListener('change', (e) => {
+      const sel = e.target.closest('.account-zone-select');
+      if (!sel) return;
+      const accountId = sel.dataset.accountId;
+      const zoneId = sel.value;
+      const acc = accounts.find(a => a.id === accountId);
+      if (acc) {
+        acc.lastZoneId = zoneId;
+        try { window.gameAPI.setAccountZone(accountId, zoneId); } catch (err) {}
+        renderAccountSidebar();
+      }
+    });
+
     // IPC 事件监听
     ipcRenderer.on('accounts-update', (event, accountList) => {
       accounts = accountList || [];
       renderAccountSidebar();
+    });
+
+    // 主进程抓到新凭证后通知刷新账号栏
+    ipcRenderer.on('accounts-changed', () => {
+      try { window.gameAPI.getAccounts(); } catch (e) {}
     });
 
     ipcRenderer.on('theme-update', (event, colors) => {
@@ -1586,16 +2078,34 @@
       windowSlot = data.windowSlot || 1;
       currentGame = data.game;
       accounts = data.accounts || [];
-
+      fitLargeScreen = data.fitLargeScreen !== false;
+      flashQuality = normalizeFlashQuality(data.flashQuality);
       document.title = data.game.name;
       document.getElementById('windowTitle').textContent = data.game.name;
 
-      const initialAccount = data.account ? { qq: data.account.qq, qqPwd: data.account.qqPwd || '' } : null;
-      addTab('窗口1', initialAccount);
+      const initialAccount = data.account || null;
+      let initialName = '窗口1';
+      if (initialAccount) {
+        const cred = initialAccount.credential;
+        const zoneName = cred && (cred.zone_name || cred.zone_id);
+        initialName = accountTabName(initialAccount, zoneName);
+      }
+      addTab(initialName, initialAccount);
+    });
+
+    ipcRenderer.on('flash-quality-update', (event, quality) => {
+      flashQuality = normalizeFlashQuality(quality);
+      // 新标签立即使用新画质；当前活跃标签尽力运行时切换（部分 Flash 版本需刷新才完全生效）
+      const active = tabs.find(function (t) { return t.id === activeTabId; });
+      if (active && active._webview) applyFlashQuality(active._webview, flashQuality, true);
     });
 
     ipcRenderer.on('launch-account', (event, account) => {
-      const newTab = addTab(account.windowName || account.qq, { qq: account.qq, qqPwd: account.qqPwd || '' });
+      // 必须把完整账号对象（含 credential / id）带进新标签，否则只能填账号密码，
+      // 自动保存的凭证账号没有密码就进不去。
+      const cred = account && account.credential;
+      const zoneName = cred && (cred.zone_name || cred.zone_id);
+      addTab(accountTabName(account, zoneName), account);
     });
 
     ipcRenderer.on('window-blur', () => {
@@ -1606,20 +2116,33 @@
         }
         if (tab.id !== activeTabId) setTabThrottle(tab, true);
         // 窗口失焦：整窗降画质（只降画质，不停逻辑，不影响挂机）
-        applyFlashQuality(tab._webview, 'low');
+        applyFlashQuality(tab._webview, 'low', false);
       });
     });
 
-    ipcRenderer.on('window-focus', () => {
+    // 窗口重新可用（聚焦 / 从最小化恢复）：活跃标签必须解除 paused 并恢复声音，
+    // 否则 webview 还是 pointer-events:none，游戏里点任何地方都没反应。
+    function markWindowActive() {
       isWindowActive = true;
       tabs.forEach(tab => {
-        if (tab._webview && tab.id !== activeTabId) {
-          tab._webview.classList.remove('paused');
+        if (!tab._webview) return;
+        const active = tab.id === activeTabId;
+        tab._webview.classList.remove('paused');
+        if (active) {
+          if (!isMuted) {
+            try { tab._webview.setAudioMuted(false); } catch (e) {}
+          }
+        } else {
+          try { tab._webview.setAudioMuted(true); } catch (e) {}
         }
-        setTabThrottle(tab, tab.id !== activeTabId);
-        // 窗口重新聚焦：活跃标签恢复高画质，其余保持低画质
-        applyFlashQuality(tab._webview, tab.id === activeTabId ? 'high' : 'low');
+        setTabThrottle(tab, !active);
+        // 活跃标签恢复配置画质，其余保持低画质
+        applyFlashQuality(tab._webview, active ? flashQuality : 'low', active);
       });
+    }
+
+    ipcRenderer.on('window-focus', () => {
+      markWindowActive();
     });
 
     ipcRenderer.on('window-minimized', () => {
@@ -1633,17 +2156,114 @@
     });
 
     ipcRenderer.on('window-restored', () => {
-      isWindowActive = true;
-      tabs.forEach(tab => {
+      markWindowActive();
+      syncGuestResize();
+    });
+
+    // 宿主窗口尺寸变化后，主动让游戏页重新算一次舞台尺寸。
+    // 游戏页的 onResize 依赖 window resize 事件；最大化/还原后有时收不到，画面就不贴合窗口。
+    let hostResizeTimer = null;
+    function syncGuestResize() {
+      if (hostResizeTimer) clearTimeout(hostResizeTimer);
+      hostResizeTimer = setTimeout(function () {
+        hostResizeTimer = null;
+        applyViewportZoom();
+        setTimeout(function () {
+          tabs.forEach(function (tab) {
+            if (!tab._webview) return;
+            try {
+              tab._webview.executeJavaScript('window.dispatchEvent(new Event("resize"));').catch(function () {});
+            } catch (e) {}
+          });
+        }, 60);
+      }, 120);
+    }
+    // 游戏页面把 Flash 舞台限制在 1920×1080。大屏时整页等比放大（cover），
+    // 缩放比按 1/8 步进取值，避开 1.333 这类循环小数，减少 Flash 地图瓦片的接缝。
+    // 注意：不要把闪客舞台撑到原生尺寸，游戏 UI 只适配到 1920×1080，撑大后布局会错乱。
+    function applyViewportZoom() {
+      let z = 1;
+      try {
+        const w = container ? container.clientWidth : window.innerWidth;
+        const h = container ? container.clientHeight : window.innerHeight;
+        if (fitLargeScreen && w > 0 && h > 0) {
+          z = Math.max(w / 1920, h / 1080);
+          z = Math.max(1, Math.min(4, Math.ceil(z * 8) / 8));
+        }
+      } catch (e) { z = 1; }
+      tabs.forEach(function (tab) {
         if (tab._webview) {
-          if (tab.id === activeTabId) {
-            tab._webview.classList.remove('paused');
-            if (!isMuted) {
-              try { tab._webview.setAudioMuted(false); } catch (e) {}
-            }
-          }
+          try { tab._webview.setZoomFactor(z); } catch (e) {}
         }
       });
+      window.__narutoViewportZoom = z;
+    }
+
+    window.addEventListener('resize', syncGuestResize);
+
+    // ---------- 全局快捷键（主进程 before-input-event 统一拦截后发过来）----------
+    function cycleTab(dir) {
+      if (!tabs.length) return;
+      const i = tabs.findIndex(function (t) { return t.id === activeTabId; });
+      const n = tabs.length;
+      const next = tabs[((i < 0 ? 0 : i) + dir + n) % n];
+      if (next) switchTab(next.id);
+    }
+
+    // 启动器 UI 都关闭后，把 Esc 转发给当前游戏页，交给游戏关闭自己的窗口
+    function forwardEscapeToGame() {
+      const tab = tabs.find(function (t) { return t.id === activeTabId; });
+      if (!tab || !tab._webview) return;
+      try { tab._webview.focus(); } catch (e) {}
+      try {
+        const id = tab._webview.getWebContentsId();
+        if (id) ipcRenderer.send('send-escape-to-guest', id);
+      } catch (e) {}
+    }
+
+    ipcRenderer.on('shortcut', function (e, action) {
+      if (!action) return;
+
+      if (action.indexOf('switch-tab:') === 0) {
+        const idx = parseInt(action.split(':')[1], 10) - 1;
+        const tab = tabs[idx];
+        if (tab) switchTab(tab.id);
+        return;
+      }
+
+      if (action === 'escape') {
+        const help = document.getElementById('helpModal');
+        if (help) { help.remove(); return; }
+        const modal = document.querySelector('.add-account-modal');
+        if (modal) {
+          const cancel = document.getElementById('modalCancel');
+          if (cancel) cancel.click(); else modal.remove();
+          return;
+        }
+        if (moreMenu && moreMenu.classList.contains('open')) { closeMoreMenu(); return; }
+        if (openSidebar) { setSidebar(null); return; }
+        if (dragState) {
+          cleanupDragPlaceholder();
+          hideDropLine();
+          hideDragOverlay();
+          dragState = null;
+          return;
+        }
+        forwardEscapeToGame();
+        return;
+      }
+
+      if (action === 'new-tab') { addTab(); return; }
+      if (action === 'close-tab') { if (activeTabId) removeTab(activeTabId); return; }
+      if (action === 'next-tab') { cycleTab(1); return; }
+      if (action === 'prev-tab') { cycleTab(-1); return; }
+      if (action === 'toggle-tabs') { setSidebar('tabs'); return; }
+      if (action === 'toggle-accounts') { setSidebar('accounts'); return; }
+      if (action === 'refresh') { try { window.gameAPI.refreshPage(); } catch (err) {} return; }
+      if (action === 'mute') { toggleMute(); return; }
+      if (action === 'more') { openMoreMenu(); return; }
+      if (action === 'fullscreen') { ipcRenderer.send('toggle-fullscreen'); return; }
+      if (action === 'close-window') { try { window.gameAPI.closeWindow(); } catch (err) {} }
     });
 
     // 主题应用：颜色由主进程统一下发（main.js 的 THEMES 是唯一数据源）
@@ -1661,15 +2281,6 @@
       root.style.setProperty('--separator', c.separator);
       root.style.setProperty('--accent', c.accent);
     }
-
-    // 恢复拉伸模式状态
-    try {
-      window.gameAPI.getConfig('stretchMode').then(function(enabled) {
-        if (enabled) {
-          setStretchMode(true);
-        }
-      }).catch(function() {});
-    } catch (e) {}
 
     // 页面加载完成后请求游戏信息
     document.addEventListener('DOMContentLoaded', () => {

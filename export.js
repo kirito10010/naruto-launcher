@@ -10,7 +10,6 @@ const SALT_LEN = 2;
 const ZERO_LEN = 7;
 const DELTA = 0x9E3779B9;
 const KEY = Buffer.from('d796c2542916b456', 'latin1');
-const GAME_PORT = 11096;
 
 const IDENTITY = { 0: '成员', 1: '精英', 2: '暗部', 3: '高层', 4: '首领', 5: '指挥官', 6: '军需官', 7: '科学家', 8: '通灵使' };
 const CAREER = { 1: '碧蓝之牙', 2: '红莲之瞳', 3: '疾风舞者', 4: '黑夜之刃', 5: '赤色岩拳' };
@@ -251,7 +250,10 @@ function nameMap(consts) {
   return out;
 }
 
-function extractGameStream(netlogPath) {
+// 找游戏连接：不再依赖固定端口（不同大区/场次的 zone 端口会变，历史上出现过 11096、18186）。
+// 做法：把所有 socket 的字节流按帧格式试解析，取「命中 preferCmds 最多、其次帧数最多」的那个。
+// preferCmds 可选，例如喵问答传 [199684, 199685]；不传就按帧数最多的 socket 选。
+function extractGameStream(netlogPath, preferCmds) {
   const log = JSON.parse(fs.readFileSync(netlogPath, 'utf8'));
   const typeName = nameMap(log.constants && log.constants.logEventTypes);
   const addrOf = {};
@@ -263,26 +265,41 @@ function extractGameStream(netlogPath) {
       if (a && ev.source) addrOf[ev.source.id] = a;
     }
   }
-  const cands = [];
-  for (const [id, addr] of Object.entries(addrOf)) {
-    if (addr.indexOf(':' + GAME_PORT) >= 0) cands.push(Number(id));
+
+  const socks = new Map();   // id -> { tx: [], rx: [] }
+  for (const ev of (log.events || [])) {
+    const t = typeName[ev.type];
+    if (!ev.source) continue;
+    if (t !== 'SOCKET_BYTES_SENT' && t !== 'SOCKET_BYTES_RECEIVED') continue;
+    const b64 = ev.params && ev.params.bytes;
+    if (typeof b64 !== 'string') continue;
+    const id = ev.source.id;
+    let z = socks.get(id);
+    if (!z) { z = { tx: [], rx: [] }; socks.set(id, z); }
+    (t.indexOf('RECEIVED') >= 0 ? z.rx : z.tx).push(Buffer.from(b64, 'base64'));
   }
-  if (!cands.length) throw new Error('未在 netlog 中找到连到 ' + GAME_PORT + ' 端口的游戏连接');
-  // 同一端口可能有多个 socket（策略文件 843/11096、游戏主连接 11096）→ 取数据量最大的
+
+  const prefer = new Set(preferCmds || []);
   let best = null;
-  for (const sid of cands) {
-    const tx = [], rx = [];
-    for (const ev of (log.events || [])) {
-      const t = typeName[ev.type];
-      if (!t || !ev.source || ev.source.id !== sid) continue;
-      if (t !== 'SOCKET_BYTES_SENT' && t !== 'SOCKET_BYTES_RECEIVED') continue;
-      const b64 = ev.params && ev.params.bytes;
-      if (typeof b64 !== 'string') continue;
-      (t.indexOf('RECEIVED') >= 0 ? rx : tx).push(Buffer.from(b64, 'base64'));
-    }
-    const cand = { tx: Buffer.concat(tx), rx: Buffer.concat(rx) };
-    if (!best || cand.rx.length > best.rx.length) best = cand;
+  const stats = [];
+  for (const [id, z] of socks) {
+    const rx = Buffer.concat(z.rx);
+    const tx = Buffer.concat(z.tx);
+    if (!rx.length && !tx.length) continue;
+    let fr = [];
+    try { fr = frames(rx); } catch (e) { fr = []; }
+    const hits = prefer.size ? fr.filter(([c]) => prefer.has(c)).length : 0;
+    const row = { id, addr: addrOf[id] || '', rxLen: rx.length, txLen: tx.length, frames: fr.length, hits };
+    stats.push(row);
+    const better = !best
+      || hits > best.hits
+      || (hits === best.hits && fr.length > best.frames);
+    if (better) best = { rx, tx, hits, frames: fr.length, id };
   }
+  if (!best) throw new Error('netlog 里没有任何 socket 数据');
+  if (!best.frames) throw new Error('netlog 里没有可解析的游戏帧数据');
+  stats.sort((a, b) => (b.hits - a.hits) || (b.frames - a.frames));
+  best.stats = stats.slice(0, 8);
   return best;
 }
 

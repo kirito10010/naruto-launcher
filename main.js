@@ -97,209 +97,235 @@ const LOG_FILE = path.join(app.getPath('userData'), 'launcher.log');
 const CONFIG_FILE = path.join(app.getPath('userData'), 'config.json');
 const CURRENT_VERSION = app.getVersion();
 
+// Flash 默认版本迁移标记：
+// 1.12.1 起默认改成「内置国际版 32」（部分机器用国内版 34 会卡在进游戏）。
+// 升级到 1.12.1 时会把所有用户的 flashChoice 强制重置为国际版一次，之后不再强制。
+// 注意：这个值不要再改（改成新版本号会导致下次升级又强制重置一次）。
+const FLASH_MIGRATION_ID = '1.12.1';
+const FLASH_DEFAULT_CHOICE = 'system';   // system = 内置国内版 34.0.0.376（纯净版）
+// 1.14.0 一次性重置用户设置：升级后旧设置全部恢复默认，仅此一次。
+// 注意：以后发版不要再改这个值，否则会再次强制重置。
+const SETTINGS_RESET_ID = '1.14.0';
+const DEFAULT_SETTINGS = {
+  theme: 'mint',
+  lastSpeed: 1,
+  diskCache: true,
+  flashChoice: FLASH_DEFAULT_CHOICE,
+  flashMigrated: FLASH_MIGRATION_ID,
+  captureEnabled: false,
+  captureMode: 'off',
+  forceGpu: true,
+  softwareRender: false,
+  perfDiag: false,
+  flashQuality: 'high',
+  gameEntry: 'qqgame',
+  fitLargeScreen: true,
+  settingsResetId: SETTINGS_RESET_ID
+};
+
 // 主题单一数据源：启动器界面 + 游戏窗口 + 4399 窗口共用
 // bg/panel/... 供启动器 CSS 变量；winBg 供窗口 backgroundColor；
 // toolbarBg1/2 + toolbar* 供游戏窗口/4399 窗口工具栏（由 getThemeColors() 统一下发）
 const THEMES = {
   mint: {
     name: '薄荷',
-    bg: 'linear-gradient(160deg,#dff5ef 0%,#e7f1fb 100%)',
-    winBg: '#e3f4ef',
+    bg: 'linear-gradient(160deg,#d6f5ec 0%,#e6fbf4 100%)',
+    winBg: '#ddf3ea',
     panel: 'rgba(255,255,255,0.88)',
-    panelBorder: 'rgba(20,184,166,0.18)',
+    panelBorder: 'rgba(13,148,136,0.20)',
     text: '#1e2a37',
     sub: '#7c8794',
-    accent: '#14b8a6',
+    accent: '#0d9488',
     accent2: '#2dd4bf',
     accentText: '#ffffff',
-    hover: 'rgba(20,184,166,0.10)',
-    shadow: 'rgba(20,184,166,0.25)',
+    hover: 'rgba(13,148,136,0.12)',
+    shadow: 'rgba(13,148,136,0.25)',
     toolbarBg1: '#ffffff',
-    toolbarBg2: '#f0fdfa',
-    toolbarBorder: '#d7ece8',
+    toolbarBg2: '#effcf8',
+    toolbarBorder: '#cfe9e3',
     toolbarBtn: '#ffffff',
-    toolbarBtnBorder: '#cfe3df',
-    toolbarSep: '#dbe7e5'
+    toolbarBtnBorder: '#c4e2dc',
+    toolbarSep: '#d5e9e5'
   },
   sky: {
     name: '天空',
-    bg: 'linear-gradient(160deg,#dceafd 0%,#eaf3ff 100%)',
-    winBg: '#dfeafc',
+    bg: 'linear-gradient(160deg,#d8e6ff 0%,#eaf2ff 100%)',
+    winBg: '#dbe8ff',
     panel: 'rgba(255,255,255,0.88)',
-    panelBorder: 'rgba(59,130,246,0.18)',
-    text: '#1e2a3a',
-    sub: '#7d8899',
-    accent: '#3b82f6',
+    panelBorder: 'rgba(37,99,235,0.20)',
+    text: '#17233a',
+    sub: '#7a8699',
+    accent: '#2563eb',
     accent2: '#60a5fa',
     accentText: '#ffffff',
-    hover: 'rgba(59,130,246,0.10)',
-    shadow: 'rgba(59,130,246,0.25)',
+    hover: 'rgba(37,99,235,0.12)',
+    shadow: 'rgba(37,99,235,0.25)',
     toolbarBg1: '#ffffff',
-    toolbarBg2: '#eff6ff',
-    toolbarBorder: '#d7e6fb',
+    toolbarBg2: '#eef4ff',
+    toolbarBorder: '#d3e3fb',
     toolbarBtn: '#ffffff',
-    toolbarBtnBorder: '#cfe0f7',
-    toolbarSep: '#dbe7f7'
-  },
-  sakura: {
-    name: '樱花',
-    bg: 'linear-gradient(160deg,#ffe3ed 0%,#faeafd 100%)',
-    winBg: '#fde5ef',
-    panel: 'rgba(255,255,255,0.88)',
-    panelBorder: 'rgba(236,72,153,0.18)',
-    text: '#3a1e2a',
-    sub: '#997d8a',
-    accent: '#ec4899',
-    accent2: '#f472b6',
-    accentText: '#ffffff',
-    hover: 'rgba(236,72,153,0.10)',
-    shadow: 'rgba(236,72,153,0.25)',
-    toolbarBg1: '#ffffff',
-    toolbarBg2: '#fff1f7',
-    toolbarBorder: '#f7d7e6',
-    toolbarBtn: '#ffffff',
-    toolbarBtnBorder: '#f0cfe0',
-    toolbarSep: '#f3dbe8'
-  },
-  amber: {
-    name: '暖阳',
-    bg: 'linear-gradient(160deg,#ffeed6 0%,#ffe3c9 100%)',
-    winBg: '#ffecd3',
-    panel: 'rgba(255,255,255,0.90)',
-    panelBorder: 'rgba(249,115,22,0.20)',
-    text: '#3a2a1e',
-    sub: '#9a8a7d',
-    accent: '#f97316',
-    accent2: '#fb923c',
-    accentText: '#ffffff',
-    hover: 'rgba(249,115,22,0.10)',
-    shadow: 'rgba(249,115,22,0.25)',
-    toolbarBg1: '#ffffff',
-    toolbarBg2: '#fff7ed',
-    toolbarBorder: '#f7e0c8',
-    toolbarBtn: '#ffffff',
-    toolbarBtnBorder: '#f0d7bd',
-    toolbarSep: '#f3e2d0'
-  },
-  night: {
-    name: '暗夜',
-    bg: 'linear-gradient(160deg,#151b24 0%,#10141b 100%)',
-    winBg: '#151b24',
-    panel: 'rgba(255,255,255,0.06)',
-    panelBorder: 'rgba(255,255,255,0.10)',
-    text: '#e6edf3',
-    sub: '#8b97a6',
-    accent: '#2dd4bf',
-    accent2: '#22d3ee',
-    accentText: '#04231f',
-    hover: 'rgba(45,212,191,0.12)',
-    shadow: 'rgba(0,0,0,0.45)',
-    toolbarBg1: '#1b2430',
-    toolbarBg2: '#161b22',
-    toolbarBorder: '#2a3442',
-    toolbarBtn: '#222c38',
-    toolbarBtnBorder: '#33404f',
-    toolbarSep: '#2a3442'
+    toolbarBtnBorder: '#c6dbf7',
+    toolbarSep: '#d8e4f7'
   },
   violet: {
     name: '紫罗兰',
-    bg: 'linear-gradient(160deg,#ebe5fd 0%,#f3ecff 100%)',
-    winBg: '#ece6fd',
+    bg: 'linear-gradient(160deg,#e9e0ff 0%,#f4ecff 100%)',
+    winBg: '#eae1ff',
     panel: 'rgba(255,255,255,0.88)',
-    panelBorder: 'rgba(124,58,237,0.18)',
-    text: '#2a1e3a',
-    sub: '#8a7d99',
-    accent: '#7c3aed',
+    panelBorder: 'rgba(109,40,217,0.20)',
+    text: '#281c3a',
+    sub: '#887a99',
+    accent: '#6d28d9',
     accent2: '#a78bfa',
     accentText: '#ffffff',
-    hover: 'rgba(124,58,237,0.10)',
-    shadow: 'rgba(124,58,237,0.25)',
+    hover: 'rgba(109,40,217,0.12)',
+    shadow: 'rgba(109,40,217,0.25)',
     toolbarBg1: '#ffffff',
-    toolbarBg2: '#f6f2ff',
-    toolbarBorder: '#e2d9f8',
+    toolbarBg2: '#f5f0ff',
+    toolbarBorder: '#e0d5f8',
     toolbarBtn: '#ffffff',
-    toolbarBtnBorder: '#d8ccf5',
-    toolbarSep: '#e4dcf7'
+    toolbarBtnBorder: '#d5c8f5',
+    toolbarSep: '#e2d9f7'
   },
-  forest: {
-    name: '森野',
-    bg: 'linear-gradient(160deg,#e1f5e5 0%,#eef8ea 100%)',
-    winBg: '#e4f5e6',
+  sakura: {
+    name: '樱花',
+    bg: 'linear-gradient(160deg,#ffdcec 0%,#ffeaf6 100%)',
+    winBg: '#ffdfee',
     panel: 'rgba(255,255,255,0.88)',
-    panelBorder: 'rgba(21,128,61,0.18)',
-    text: '#1e3324',
-    sub: '#7d8f80',
-    accent: '#15803d',
-    accent2: '#4ade80',
+    panelBorder: 'rgba(219,39,119,0.20)',
+    text: '#3a1e2c',
+    sub: '#997d8c',
+    accent: '#db2777',
+    accent2: '#f472b6',
     accentText: '#ffffff',
-    hover: 'rgba(21,128,61,0.10)',
-    shadow: 'rgba(21,128,61,0.25)',
+    hover: 'rgba(219,39,119,0.12)',
+    shadow: 'rgba(219,39,119,0.25)',
     toolbarBg1: '#ffffff',
-    toolbarBg2: '#f1fbf2',
-    toolbarBorder: '#d8ecd9',
+    toolbarBg2: '#fff0f7',
+    toolbarBorder: '#f7d3e4',
     toolbarBtn: '#ffffff',
-    toolbarBtnBorder: '#cbe6cd',
-    toolbarSep: '#dcecdd'
+    toolbarBtnBorder: '#efc9dc',
+    toolbarSep: '#f3d7e6'
   },
   crimson: {
     name: '绯红',
-    bg: 'linear-gradient(160deg,#ffe3e9 0%,#fdeaf0 100%)',
-    winBg: '#ffe4ea',
-    panel: 'rgba(255,255,255,0.88)',
-    panelBorder: 'rgba(225,29,72,0.18)',
-    text: '#3a1e26',
-    sub: '#997d85',
-    accent: '#e11d48',
+    bg: 'linear-gradient(160deg,#ffd9d9 0%,#ffe9e6 100%)',
+    winBg: '#ffdcdc',
+    panel: 'rgba(255,255,255,0.90)',
+    panelBorder: 'rgba(220,38,38,0.20)',
+    text: '#3a1c1c',
+    sub: '#9b7c7c',
+    accent: '#dc2626',
     accent2: '#fb7185',
     accentText: '#ffffff',
-    hover: 'rgba(225,29,72,0.10)',
-    shadow: 'rgba(225,29,72,0.25)',
+    hover: 'rgba(220,38,38,0.12)',
+    shadow: 'rgba(220,38,38,0.25)',
     toolbarBg1: '#ffffff',
-    toolbarBg2: '#fff1f4',
-    toolbarBorder: '#f8d8e0',
+    toolbarBg2: '#fff1ef',
+    toolbarBorder: '#f8d2cf',
     toolbarBtn: '#ffffff',
-    toolbarBtnBorder: '#f1cfd9',
-    toolbarSep: '#f5dce3'
+    toolbarBtnBorder: '#f1c7c4',
+    toolbarSep: '#f5d8d4'
+  },
+  amber: {
+    name: '暖阳',
+    bg: 'linear-gradient(160deg,#fff1c9 0%,#fff6da 100%)',
+    winBg: '#fdf0cd',
+    panel: 'rgba(255,255,255,0.90)',
+    panelBorder: 'rgba(217,119,6,0.22)',
+    text: '#3a2c14',
+    sub: '#9a8a6d',
+    accent: '#d97706',
+    accent2: '#fbbf24',
+    accentText: '#ffffff',
+    hover: 'rgba(217,119,6,0.12)',
+    shadow: 'rgba(217,119,6,0.25)',
+    toolbarBg1: '#ffffff',
+    toolbarBg2: '#fff8e6',
+    toolbarBorder: '#f7e2b8',
+    toolbarBtn: '#ffffff',
+    toolbarBtnBorder: '#efd6a6',
+    toolbarSep: '#f3e3c4'
+  },
+  forest: {
+    name: '森野',
+    bg: 'linear-gradient(160deg,#d9f7e0 0%,#eafbe9 100%)',
+    winBg: '#dcf7e1',
+    panel: 'rgba(255,255,255,0.88)',
+    panelBorder: 'rgba(22,163,74,0.20)',
+    text: '#1c3323',
+    sub: '#7b8f80',
+    accent: '#16a34a',
+    accent2: '#4ade80',
+    accentText: '#ffffff',
+    hover: 'rgba(22,163,74,0.12)',
+    shadow: 'rgba(22,163,74,0.25)',
+    toolbarBg1: '#ffffff',
+    toolbarBg2: '#f1fcf3',
+    toolbarBorder: '#d3ecd7',
+    toolbarBtn: '#ffffff',
+    toolbarBtnBorder: '#c6e6cb',
+    toolbarSep: '#d9ecd9'
   },
   mocha: {
     name: '摩卡',
-    bg: 'linear-gradient(160deg,#f6ebd9 0%,#faf2e5 100%)',
-    winBg: '#f6ecdb',
+    bg: 'linear-gradient(160deg,#f1e2cd 0%,#f8efe1 100%)',
+    winBg: '#f1e4d0',
     panel: 'rgba(255,255,255,0.90)',
-    panelBorder: 'rgba(161,98,7,0.20)',
-    text: '#3a2f1e',
-    sub: '#9a8d7d',
-    accent: '#a16207',
+    panelBorder: 'rgba(120,53,15,0.22)',
+    text: '#372a1c',
+    sub: '#94836f',
+    accent: '#92400e',
     accent2: '#d97706',
     accentText: '#ffffff',
-    hover: 'rgba(161,98,7,0.10)',
-    shadow: 'rgba(161,98,7,0.25)',
+    hover: 'rgba(120,53,15,0.12)',
+    shadow: 'rgba(120,53,15,0.25)',
     toolbarBg1: '#ffffff',
-    toolbarBg2: '#fdf8f0',
-    toolbarBorder: '#eee0c8',
+    toolbarBg2: '#faf3e8',
+    toolbarBorder: '#e9d9bf',
     toolbarBtn: '#ffffff',
-    toolbarBtnBorder: '#e5d3b6',
-    toolbarSep: '#efe3d0'
+    toolbarBtnBorder: '#ddc9a8',
+    toolbarSep: '#ebdcc6'
+  },
+  night: {
+    name: '暗夜',
+    bg: 'linear-gradient(160deg,#0b1220 0%,#0e1a2e 100%)',
+    winBg: '#0b1220',
+    panel: 'rgba(255,255,255,0.06)',
+    panelBorder: 'rgba(56,189,248,0.18)',
+    text: '#e6edf3',
+    sub: '#8b97a6',
+    accent: '#38bdf8',
+    accent2: '#22d3ee',
+    accentText: '#04231f',
+    hover: 'rgba(56,189,248,0.14)',
+    shadow: 'rgba(0,0,0,0.5)',
+    toolbarBg1: '#101a2b',
+    toolbarBg2: '#0c1424',
+    toolbarBorder: '#1d2c44',
+    toolbarBtn: '#152238',
+    toolbarBtnBorder: '#24354f',
+    toolbarSep: '#1d2c44'
   },
   graphite: {
     name: '石墨',
-    bg: 'linear-gradient(160deg,#1c1f26 0%,#14171c 100%)',
-    winBg: '#1c1f26',
+    bg: 'linear-gradient(160deg,#191919 0%,#131313 100%)',
+    winBg: '#191919',
     panel: 'rgba(255,255,255,0.06)',
-    panelBorder: 'rgba(255,255,255,0.10)',
-    text: '#e2e8f0',
-    sub: '#8a94a3',
-    accent: '#94a3b8',
-    accent2: '#cbd5e1',
-    accentText: '#10151c',
-    hover: 'rgba(148,163,184,0.14)',
-    shadow: 'rgba(0,0,0,0.45)',
-    toolbarBg1: '#22262e',
-    toolbarBg2: '#1a1d23',
-    toolbarBorder: '#31363f',
-    toolbarBtn: '#262b33',
-    toolbarBtnBorder: '#3a414c',
-    toolbarSep: '#31363f'
+    panelBorder: 'rgba(255,255,255,0.12)',
+    text: '#e5e5e5',
+    sub: '#9a9a9a',
+    accent: '#d4d4d8',
+    accent2: '#a1a1aa',
+    accentText: '#111111',
+    hover: 'rgba(212,212,216,0.14)',
+    shadow: 'rgba(0,0,0,0.5)',
+    toolbarBg1: '#202020',
+    toolbarBg2: '#171717',
+    toolbarBorder: '#333333',
+    toolbarBtn: '#252525',
+    toolbarBtnBorder: '#3a3a3a',
+    toolbarSep: '#333333'
   }
 };
 // 旧主题 key 迁移
@@ -313,7 +339,10 @@ function normalizeTheme(t) {
 function readConfigSync() {
   try {
     if (fs.existsSync(CONFIG_FILE)) {
-      return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+      const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+      // 1.14.0 一次性重置：旧设置不参与本次启动的抓包 / GPU / 软件渲染判定
+      if (cfg.settingsResetId !== SETTINGS_RESET_ID) return {};
+      return cfg;
     }
   } catch (e) {
     // 忽略，使用默认
@@ -328,6 +357,43 @@ const EARLY_CONFIG = readConfigSync();
 function normalizeCaptureMode(v) {
   if (v === 'off' || v === 'stats' || v === 'full' || v === 'quiz' || v === 'miao') return v;
   return v === true ? 'stats' : 'off';   // 兼容老的 captureEnabled: true
+}
+
+// 游戏画面画质：high（抗锯齿，默认）/ medium / low（关闭抗锯齿，文字更锐利）
+function normalizeFlashQuality(v) {
+  if (v === 'low' || v === 'medium' || v === 'high') return v;
+  return 'high';
+}
+
+// preload 只能保证主 frame；QQ 游戏大厅入口把游戏放在 iframe 里，
+// 这里用 CDP 把同一份补丁注入 guest 的每个新文档（含子 frame）。
+function flashQualityPatchSource(quality) {
+  if (quality !== 'low' && quality !== 'medium') return '';
+  const file = quality === 'low' ? 'flash-quality-low-preload.js' : 'flash-quality-medium-preload.js';
+  try {
+    return fs.readFileSync(path.join(__dirname, file), 'utf8');
+  } catch (e) {
+    return '';
+  }
+}
+
+function attachFlashQualityPatch(wc) {
+  if (!wc || wc.isDestroyed()) return;
+  const quality = normalizeFlashQuality(config.flashQuality);
+  const source = flashQualityPatchSource(quality);
+  if (!source) return;
+  try {
+    if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
+    const pending = wc.debugger.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source });
+    if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+  } catch (e) {
+    log('[quality] CDP 注入失败: ' + e.message, 'WARN');
+  }
+}
+
+// 游戏入口：official（官网）/ qqgame（QQ 游戏大厅 app_frame）
+function normalizeGameEntry(v) {
+  return v === 'qqgame' ? 'qqgame' : 'official';
 }
 const CAPTURE_MODE =
   process.argv.includes('--capture-full') ? 'full' :
@@ -360,18 +426,7 @@ let hvciStatus = 'unknown';
 let currentTheme = 'mint';
 let isAudioMuted = false;
 
-let config = {
-  theme: 'mint',
-  lastSpeed: 1,
-  diskCache: true,
-  flashChoice: 'system',
-  captureEnabled: false,
-  captureMode: 'off',   // off / stats（组织统计→Excel） / full（全量抓包→原始文件） / quiz（忍者检测→JSON） / miao（喵问答→JSON+图片）
-  forceGpu: true,     // 强制启用 GPU（无视驱动黑名单），默认保持原行为
-  softwareRender: false,  // 软件渲染（兼容模式）：显卡驱动有问题的机器兜底
-  updateSource: 'mirror', // 更新下载线路：mirror = 网站优先（默认） / github = GitHub 优先
-  perfDiag: false     // 性能诊断日志（每 60s 记录一次进程/内存）
-};
+let config = Object.assign({}, DEFAULT_SETTINGS);
 
 const ACCOUNTS_FILE = path.join(app.getPath('userData'), 'accounts.json');
 let accounts = [];
@@ -381,6 +436,7 @@ function loadAccounts() {
     if (fs.existsSync(ACCOUNTS_FILE)) {
       const data = fs.readFileSync(ACCOUNTS_FILE, 'utf8');
       accounts = JSON.parse(data);
+      migrateAccountZones();
       log(`账号已加载: ${accounts.length} 个`);
     } else {
       log('账号文件不存在，使用空列表');
@@ -389,6 +445,28 @@ function loadAccounts() {
     log('加载账号失败: ' + e.message, 'WARN');
     accounts = [];
   }
+}
+
+function migrateAccountZones() {
+  let changed = false;
+  for (const a of accounts) {
+    if (!a || !a.qq) continue;
+    if (!a.credentials || typeof a.credentials !== 'object' || Array.isArray(a.credentials)) {
+      a.credentials = {};
+      changed = true;
+    }
+    const cred = a.credential;
+    if (cred) {
+      const key = cred.zone_id ? String(cred.zone_id) : 'default';
+      if (!a.credentials[key]) { a.credentials[key] = cred; changed = true; }
+    }
+    if (!a.lastZoneId) {
+      const keys = Object.keys(a.credentials);
+      a.lastZoneId = keys[0] || '';
+      changed = true;
+    }
+  }
+  if (changed) saveAccounts();
 }
 
 function saveAccounts() {
@@ -420,6 +498,11 @@ function removeAccount(accountId) {
 function updateAccount(accountId, qq, password, windowName) {
   const account = accounts.find(a => a.id === accountId);
   if (account) {
+    if (qq && String(account.qq) !== String(qq)) {
+      delete account.credential;
+      account.credentials = {};
+      account.lastZoneId = '';
+    }
     if (qq) account.qq = qq;
     if (password !== undefined) account.qqPwd = password;
     if (windowName !== undefined) account.windowName = windowName;
@@ -437,6 +520,272 @@ function isLoginPage(url) {
          /login\.qq\.com/i.test(url) ||
          /qlogin\.qq\.com/i.test(url);
 }
+
+// ========== 账号凭证（skey 直连，借鉴 GameLauncher） ==========
+const QQGAME_ENTRY_URL = 'https://minigame.qq.com/plat/social_hall/app_frame/?appid=10190';
+const CREDENTIAL_COOKIE_NAMES = [
+  'skey', 'uin', 'p_uin', 'p_skey', 'pt2gguin', 'luin', 'ptui_loginuin',
+  'openid', 'access_token', 'openkey', 'pf', 'pfkey'
+];
+// cookie 没带过期时间时的兜底：7 天（失效会自动回退登录页，所以放宽是安全的）
+const CREDENTIAL_TTL_MS = 7 * 24 * 3600 * 1000;
+
+function normalizeUinValue(raw) {
+  if (!raw) return 0;
+  const s = String(raw).replace(/^o0*/, '').replace(/\D/g, '');
+  const n = parseInt(s, 10);
+  return isNaN(n) ? 0 : n;
+}
+
+function parseZoneFromUrl(url) {
+  let zoneId = '';
+  let zoneName = '';
+  try {
+    const q = String(url || '');
+    const idm = /[?&]sServerID=(\d+)/i.exec(q);
+    if (idm) zoneId = idm[1];
+    const nm = /[?&]sServerName=([^&]*)/i.exec(q);
+    if (nm) {
+      try { zoneName = decodeURIComponent(nm[1].replace(/\+/g, ' ')); } catch (e) { zoneName = nm[1]; }
+    }
+  } catch (e) { /* ignore */ }
+  return { zone_id: zoneId, zone_name: zoneName };
+}
+
+function isCredentialUsable(cred) {
+  if (!cred || !cred.skey || !cred.login_url) return false;
+  if (!cred.expires_at) return true;
+  const t = new Date(cred.expires_at).getTime();
+  return isFinite(t) ? t > Date.now() : true;
+}
+
+
+// 多区服凭证：一个 QQ 可保存多个区的 credential
+function getAccountZones(account) {
+  if (!account) return [];
+  const map = account.credentials && typeof account.credentials === 'object' ? account.credentials : {};
+  const list = Object.keys(map).map((k) => map[k]).filter((c) => c && (c.login_url || c.zone_id || c.zone_name));
+  if (!list.length && account.credential && account.credential.login_url) list.push(account.credential);
+  return list;
+}
+
+function resolveAccountZoneId(account, zoneId) {
+  if (!account) return '';
+  const map = account.credentials && typeof account.credentials === 'object' ? account.credentials : {};
+  if (zoneId && map[String(zoneId)]) return String(zoneId);
+  if (account.lastZoneId && map[String(account.lastZoneId)]) return String(account.lastZoneId);
+  if (account.credential) {
+    const z = account.credential.zone_id ? String(account.credential.zone_id) : '';
+    if (z && map[z]) return z;
+    if (!z && map.default) return 'default';
+  }
+  const keys = Object.keys(map);
+  return keys.length ? keys[0] : '';
+}
+
+function pickAccountCredential(account, zoneId) {
+  if (!account) return null;
+  const map = account.credentials && typeof account.credentials === 'object' ? account.credentials : {};
+  const key = resolveAccountZoneId(account, zoneId);
+  if (key && map[key]) return map[key].login_url ? map[key] : null;
+  if (account.credential && account.credential.login_url) return account.credential;
+  const zones = getAccountZones(account);
+  return zones.length ? zones[0] : null;
+}
+
+function pickAccountForZone(account, zoneId) {
+  if (!account) return null;
+  const key = resolveAccountZoneId(account, zoneId);
+  const copy = Object.assign({}, account, { credential: pickAccountCredential(account, key) });
+  if (key) copy._selectedZoneId = key;
+  return copy;
+}
+
+function accountLabelForZone(account, zoneId) {
+  if (!account) return '窗口';
+  const base = account.windowName || account.qq;
+  const zones = getAccountZones(account);
+  const cred = pickAccountCredential(account, zoneId);
+  const zoneName = cred && (cred.zone_name || cred.zone_id);
+  return (zones.length > 1 && zoneName) ? (base + ' · ' + zoneName) : base;
+}
+
+function broadcastAccountsChanged() {
+  for (const gw of gameWindows) {
+    try {
+      if (gw && gw.win && !gw.win.isDestroyed()) gw.win.webContents.send('accounts-changed');
+    } catch (e) { /* ignore */ }
+  }
+}
+
+// 进入 main.html?sServerID= 之后，从该窗口分区里抓 skey 存成账号凭证
+async function captureCredentialFromGuest(guest, url) {
+  try {
+    if (!guest || guest.isDestroyed()) return;
+    const ses = guest.session;
+    const cookies = await ses.cookies.get({});
+    const skey = cookies.find((c) => c.name === 'skey' && c.value);
+    if (!skey) return;
+    const uinCookie = cookies.find((c) => ['uin', 'p_uin', 'ptui_loginuin', 'luin'].indexOf(c.name) >= 0 && c.value);
+    const uin = normalizeUinValue(uinCookie && uinCookie.value);
+    if (!uin) return;
+    let account = accounts.find((a) => String(a.qq || '').replace(/\D/g, '') === String(uin));
+    let autoCreated = false;
+    // 扫码、检测本机 QQ、账号密码登录最终都会进这里：列表里没有这个 QQ 就自动建一条，
+    // 凭证直接挂在账号上，用户不用再手动添加。
+    if (!account) {
+      account = {
+        id: 'account-' + Date.now(),
+        qq: String(uin),
+        qqPwd: '',
+        windowName: '',
+        autoSaved: true
+      };
+      accounts.push(account);
+      autoCreated = true;
+    }
+
+    const expiresAt = skey.expirationDate
+      ? Math.round(skey.expirationDate * 1000)
+      : Date.now() + CREDENTIAL_TTL_MS;
+    const keep = cookies
+      .filter((c) => CREDENTIAL_COOKIE_NAMES.indexOf(c.name) >= 0 && c.value &&
+        /(^|\.)(qq|huoying\.qq|ptlogin2\.qq)\.com$/i.test(c.domain || ''))
+      .map((c) => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path || '/',
+        secure: !!c.secure,
+        httpOnly: !!c.httpOnly,
+        expirationDate: c.expirationDate || 0
+      }));
+    const zone = parseZoneFromUrl(url);
+    const credential = {
+      uin: uin,
+      skey: skey.value,
+      cookies: keep,
+      login_url: url,
+      zone_id: zone.zone_id,
+      zone_name: zone.zone_name,
+      expires_at: new Date(expiresAt).toISOString(),
+      captured_at: new Date().toISOString()
+    };
+    const zoneKey = String(zone.zone_id || 'default');
+    if (!account.credentials || typeof account.credentials !== 'object') account.credentials = {};
+    account.credentials[zoneKey] = credential;
+    account.lastZoneId = zoneKey;
+    account.credential = credential;
+    saveAccounts();
+    broadcastAccountsChanged();
+    log('[credential] ' + (autoCreated ? '已自动保存新账号: ' : '已保存账号凭证: ') + account.qq + ' 区服=' + (zone.zone_name || zone.zone_id || '-'));
+  } catch (e) {
+    log('[credential] 抓取失败: ' + e.message, 'WARN');
+  }
+}
+
+function attachCredentialCapture(guest) {
+  if (!guest || guest.isDestroyed()) return;
+  let lastUrl = '';
+  const onUrl = (url) => {
+    if (!url || url === lastUrl) return;
+    if (/^https:\/\/game\.huoying\.qq\.com\/main\.html/i.test(url) && /sServerID=\d+/i.test(url)) {
+      lastUrl = url;
+      // 等 cookie 落盘后再抓
+      setTimeout(() => {
+        if (guest && !guest.isDestroyed()) captureCredentialFromGuest(guest, url);
+      }, 1500);
+    }
+  };
+  guest.on('did-navigate', (e, url) => onUrl(url));
+  guest.on('did-navigate-in-page', (e, url, isMainFrame) => { if (isMainFrame !== false) onUrl(url); });
+  guest.on('did-frame-navigate', (e, url) => onUrl(url));
+}
+
+// 把凭证里的 cookie 原样写回指定分区
+ipcMain.handle('apply-credential', async (event, partition, cred) => {
+  if (!partition || !cred || !cred.login_url) return false;
+  const ses = require('electron').session.fromPartition(partition);
+  const expSec = cred.expires_at ? Math.round(new Date(cred.expires_at).getTime() / 1000) : Math.round((Date.now() + CREDENTIAL_TTL_MS) / 1000);
+  const list = Array.isArray(cred.cookies) ? cred.cookies : [];
+  let written = 0;
+  for (const c of list) {
+    if (!c || !c.name || !c.value) continue;
+    const domain = c.domain || '.huoying.qq.com';
+    const url = /(^|\.)ptlogin2\.qq\.com$/i.test(domain) ? 'https://xui.ptlogin2.qq.com/' : 'https://game.huoying.qq.com/';
+    try {
+      await ses.cookies.set({
+        url: url,
+        name: c.name,
+        value: c.value,
+        domain: domain,
+        path: c.path || '/',
+        secure: !!c.secure,
+        httpOnly: !!c.httpOnly,
+        expirationDate: c.expirationDate || expSec
+      });
+      written++;
+    } catch (e) { /* ignore */ }
+  }
+  if (!written && cred.skey) {
+    try {
+      await ses.cookies.set({ url: 'https://game.huoying.qq.com/', name: 'skey', value: cred.skey, domain: '.huoying.qq.com', path: '/', secure: false, httpOnly: false, expirationDate: expSec });
+      if (cred.uin) {
+        await ses.cookies.set({ url: 'https://game.huoying.qq.com/', name: 'uin', value: 'o0' + String(cred.uin).padStart(10, '0'), domain: '.huoying.qq.com', path: '/', secure: false, httpOnly: false, expirationDate: expSec });
+      }
+      written = 1;
+    } catch (e) { /* ignore */ }
+  }
+  log('[credential] 注入 cookie: ' + written + ' 条 → ' + partition);
+  return written > 0;
+});
+
+ipcMain.handle('clear-credential', (event, accountId, zoneId) => {
+  const account = accounts.find((a) => a.id === accountId);
+  if (!account) return false;
+  if (!account.credentials || typeof account.credentials !== 'object') account.credentials = {};
+  if (zoneId) {
+    const key = String(zoneId);
+    const old = account.credentials[key] || {};
+    account.credentials[key] = {
+      zone_id: old.zone_id || key,
+      zone_name: old.zone_name || '',
+      login_url: '',
+      skey: '',
+      cookies: [],
+      expires_at: '',
+      captured_at: ''
+    };
+    if (account.credential && String(account.credential.zone_id || 'default') === key) {
+      const keys = Object.keys(account.credentials).filter(k => account.credentials[k] && account.credentials[k].login_url);
+      if (keys.length) account.credential = account.credentials[keys[0]];
+      else delete account.credential;
+    }
+    if (!account.lastZoneId) {
+      const keys = Object.keys(account.credentials);
+      account.lastZoneId = keys[0] || '';
+    }
+  } else {
+    account.credentials = {};
+    delete account.credential;
+    account.lastZoneId = '';
+  }
+  saveAccounts();
+  broadcastAccountsChanged();
+  log('[credential] 已清除账号凭证: ' + account.qq + (zoneId ? ' 区服=' + zoneId : ' (全部)'));
+  return true;
+});
+
+ipcMain.on('set-account-zone', (event, accountId, zoneId) => {
+  const account = accounts.find((a) => a.id === accountId);
+  if (!account) return;
+  const key = String(zoneId || '');
+  if (!account.credentials || !account.credentials[key]) return;
+  account.lastZoneId = key;
+  saveAccounts();
+  broadcastAccountsChanged();
+  log('[credential] 账号 ' + account.qq + ' 当前区服: ' + key);
+});
 
 function injectQuickLogin(webContents, qqNumber, password) {
   const js = [
@@ -549,7 +898,23 @@ function setupAutoLogin(tabInfo) {
   });
 }
 
+// 1.14.0 一次性重置：把旧配置改写成默认值（保留 clientId，账号/凭证在 accounts.json）
+function resetSettingsIfNeeded() {
+  try {
+    if (!fs.existsSync(CONFIG_FILE)) return;
+    const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    if (parsed.settingsResetId === SETTINGS_RESET_ID) return;
+    const fresh = Object.assign({}, DEFAULT_SETTINGS, { settingsResetId: SETTINGS_RESET_ID });
+    if (parsed.clientId) fresh.clientId = parsed.clientId;
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(fresh, null, 2), 'utf8');
+    log(SETTINGS_RESET_ID + ' 一次性重置用户设置');
+  } catch (e) {
+    log('重置用户设置失败: ' + e.message, 'WARN');
+  }
+}
+
 function loadConfig() {
+  let needSave = false;
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const data = fs.readFileSync(CONFIG_FILE, 'utf8');
@@ -557,16 +922,28 @@ function loadConfig() {
       currentTheme = normalizeTheme(config.theme);
       currentSpeedRate = config.lastSpeed || 1;
       if (config.diskCache === undefined) config.diskCache = true;
-      if (config.flashChoice === undefined) config.flashChoice = 'system';
-      // 更新线路：默认网站优先
-      if (config.updateSource !== 'github') config.updateSource = 'mirror';
-      log('配置已加载: theme=' + currentTheme + ', lastSpeed=' + currentSpeedRate);
+      if (config.flashChoice === undefined) config.flashChoice = FLASH_DEFAULT_CHOICE;
+      // 1.12.1 一次性迁移：所有用户（包括手动选过国内版 34 的）统一重置为国际版 32
+      if (config.flashMigrated !== FLASH_MIGRATION_ID) {
+        config.flashChoice = FLASH_DEFAULT_CHOICE;
+        config.flashMigrated = FLASH_MIGRATION_ID;
+        needSave = true;
+        log('Flash 默认版本已迁移为国际版 32（一次性重置）');
+      }
+      log('配置已加载: theme=' + currentTheme + ', lastSpeed=' + currentSpeedRate + ', flash=' + config.flashChoice);
     } else {
-      log('配置文件不存在，使用默认配置');
+      config.flashChoice = FLASH_DEFAULT_CHOICE;
+      config.flashMigrated = FLASH_MIGRATION_ID;
+      needSave = true;
+      log('配置文件不存在，使用默认配置（Flash = 国际版 32）');
     }
   } catch (e) {
     log('加载配置失败: ' + e.message, 'WARN');
+    // 配置损坏：回退默认值，并把 Flash 迁移标记写进去，避免每次启动都重复重置
+    config = Object.assign({}, config, { flashChoice: FLASH_DEFAULT_CHOICE, flashMigrated: FLASH_MIGRATION_ID });
+    needSave = true;
   }
+  if (needSave) saveConfig();
 }
 
 function saveConfig() {
@@ -700,6 +1077,65 @@ function attachWindowWatch(wc, label) {
   attachCrashRecovery(wc, label);
 }
 
+// ---------- 游戏窗口快捷键 ----------
+// 返回动作名（未命中返回空字符串）。在 before-input-event 里拦截，
+// 所以焦点在游戏画面（Flash）里时也能生效。
+function matchShortcut(input) {
+  if (!input || input.type !== 'keyDown') return '';
+  const key = String(input.key || '');
+  const k = key.toLowerCase();
+  const ctrl = !!input.control;
+  const alt = !!input.alt;
+  const shift = !!input.shift;
+
+  if (key === 'Escape') return 'escape';
+  if (key === 'F11') return 'fullscreen';
+  if (key === 'F5') return 'refresh';
+  if (ctrl && !alt && k === 'r') return 'refresh';
+  if (ctrl && !alt && !shift && k === 't') return 'new-tab';
+  if (ctrl && !alt && !shift && k === 'w') return 'close-tab';
+  if (ctrl && alt && k === 'w') return 'close-window';
+  if (ctrl && key === 'Tab') return shift ? 'prev-tab' : 'next-tab';
+  if (alt && !ctrl && /^[1-9]$/.test(key)) return 'switch-tab:' + key;
+  if (alt && !ctrl && k === 'l') return 'toggle-tabs';
+  if (alt && !ctrl && k === 'a') return 'toggle-accounts';
+  if (alt && !ctrl && k === 'm') return 'mute';
+  if (alt && !ctrl && k === 's') return 'more';
+  return '';
+}
+
+// 挂到宿主页 + 每个 webview 客进程：哪个有焦点，快捷键就从哪里触发
+const escapeInjectedUntil = new Map();
+
+function attachShortcuts(wc, win) {
+  if (!wc || wc.isDestroyed()) return;
+  wc.on('before-input-event', (event, input) => {
+    const action = matchShortcut(input);
+    if (!action) return;
+    // 主动注入给游戏页的 Esc 不再拦截，否则会无限转发
+    if (action === 'escape' && (escapeInjectedUntil.get(wc.id) || 0) > Date.now()) return;
+    try { event.preventDefault(); } catch (e) { /* ignore */ }
+    if (!win || win.isDestroyed()) return;
+    try { win.webContents.send('shortcut', action); } catch (e) { /* ignore */ }
+  });
+}
+
+// 启动器侧边栏/弹窗都关闭时，把 Esc 真正送进当前游戏页（Flash），让游戏关掉内部窗口
+ipcMain.on('send-escape-to-guest', (event, wcId) => {
+  const wc = webContents.fromId(wcId);
+  if (!wc || wc.isDestroyed()) return;
+  const targetId = wc.id;
+  escapeInjectedUntil.set(targetId, Date.now() + 200);
+  try { wc.focus(); } catch (e) { /* ignore */ }
+  try {
+    wc.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    wc.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+  } catch (e) { /* ignore */ }
+  setTimeout(() => {
+    if ((escapeInjectedUntil.get(targetId) || 0) <= Date.now()) escapeInjectedUntil.delete(targetId);
+  }, 500);
+});
+
 // ========== 在线人数 ==========
 
 // 本机当前打开的标签页数（火影 / 4399 分开）
@@ -781,12 +1217,14 @@ function getFlashPath() {
   const sysDir = process.arch === 'x64' ? 'System32' : 'SysWOW64';
 
   // 读取 Flash 选择（内置国内版 / 内置国际版），此函数在 config 加载前执行，故直接读文件
-  // 默认 = 国内版 34.0.0.376（纯净版）
-  let flashChoice = 'system';
+  // 默认 = 内置国际版 32.0.0.344（1.12.1 起；未迁移过的用户一律按国际版处理）
+  let flashChoice = FLASH_DEFAULT_CHOICE;
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-      flashChoice = cfg.flashChoice || 'system';
+      flashChoice = (cfg.flashMigrated === FLASH_MIGRATION_ID)
+        ? (cfg.flashChoice || FLASH_DEFAULT_CHOICE)
+        : FLASH_DEFAULT_CHOICE;
     }
   } catch (e) {}
 
@@ -1467,6 +1905,12 @@ app.commandLine.appendSwitch('ppapi-flash-Allow-Windows-Sandbox', 'true');
 
 app.commandLine.appendSwitch('allow-running-insecure-content');
 app.commandLine.appendSwitch('ignore-certificate-errors');
+
+// 去掉 UA 里的 Electron 标记：QQ 的 qqgame app_frame 入口会对「带 Electron 且无 Referer」的请求直接 403。
+// 内核仍是 Chromium 87，所以 UA 里的版本号保持一致，不影响页面特性判断。
+try {
+  app.userAgentFallback = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Safari/537.36';
+} catch (e) { /* ignore */ }
 // 软件渲染（兼容模式）：显卡驱动本身有问题的机器最后的兜底（走 CPU 渲染）
 const SOFTWARE_RENDER = EARLY_CONFIG.softwareRender === true;
 // 强制启用 GPU（无视驱动黑名单）：默认开启以保持原有行为，可在「设置」里关闭
@@ -1483,13 +1927,15 @@ app.commandLine.appendSwitch('no-sandbox');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-backgrounding');
+// 窗口最小化/被遮挡时 Chromium 会暂停渲染（Flash 插件会因此卡住，恢复后一动不动）
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 // 注：已移除 disable-frame-rate-limit / disable-gpu-vsync
 //     这两个会让合成器不锁帧、不等垂直同步，CPU/GPU 持续满转 → 发热降频 → 越玩越卡
 
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('high-dpi-support', '1');
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
-app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity');
+app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity,CalculateNativeWinOcclusion');
 
 // 磁盘缓存上限 1GB（1073741824 字节）
 app.commandLine.appendSwitch('disk-cache-size', '1073741824');
@@ -1839,7 +2285,7 @@ function createLauncherWindow() {
       <div class="sec-title">Flash 版本</div>
       <div class="sel-row">
         <select class="sel" id="flashSelect" onchange="changeFlash(this.value)">
-          <option value="system">内置国内版 34.0.0.376（纯净版）</option>
+          <option value="system">内置国内版 34.0.0.376（纯净版，默认）</option>
           <option value="bundled">内置国际版 32.0.0.344</option>
         </select>
         <button class="info-btn" onclick="openHelp('flash')" title="Flash 版本说明">说明</button>
@@ -1857,15 +2303,34 @@ function createLauncherWindow() {
       </div>
       <div class="row-hint" style="margin-top:6px">切换后需重启应用生效</div>
 
-      <div class="sec-title">更新下载</div>
+      <div class="sec-title">游戏画面</div>
       <div class="sel-row">
-        <select class="sel" id="updateSourceSel" onchange="changeUpdateSource(this.value)">
-          <option value="mirror">网站（默认，稳定）</option>
-          <option value="github">GitHub（有外网时可能更快）</option>
+        <select class="sel" id="qualitySel" onchange="changeFlashQuality(this.value)">
+          <option value="high">高（默认，抗锯齿最平滑）</option>
+          <option value="medium">中（画质与性能平衡）</option>
+          <option value="low">低（关闭抗锯齿，最省性能）</option>
         </select>
-        <button class="info-btn" onclick="openHelp('updateSource')" title="更新下载线路说明">说明</button>
+        <button class="info-btn" onclick="openHelp('quality')" title="游戏画面画质说明">说明</button>
       </div>
-      <div class="row-hint" style="margin-top:6px">下次检查更新时生效</div>
+      <div class="row-hint" style="margin-top:6px">新开游戏窗口/标签生效；后台标签始终用低画质</div>
+
+      <div class="sec-title">游戏入口</div>
+      <div class="sel-row">
+        <select class="sel" id="gameEntrySel" onchange="changeGameEntry(this.value)">
+          <option value="qqgame">QQ游戏大厅入口（默认）</option>
+          <option value="official">官网入口</option>
+        </select>
+        <button class="info-btn" onclick="openHelp('gameEntry')" title="游戏入口说明">说明</button>
+      </div>
+      <div class="row-hint" style="margin-top:6px">新开游戏窗口生效；两种入口登录页不同</div>
+
+      <div class="row">
+        <span class="row-label">大屏适配<span class="row-hint">按窗口等比放大游戏，2K/4K 全屏不留黑边</span></span>
+        <label class="switch">
+          <input type="checkbox" id="fitScreenChk" onchange="toggleFitScreen(this.checked)">
+          <span class="track"></span>
+        </label>
+      </div>
 
       <div class="sec-title">性能</div>
       <div class="row">
@@ -1917,9 +2382,11 @@ function createLauncherWindow() {
     function openSite() { shell.openExternal('http://49.235.142.253/'); }
     function changeFlash(choice) { ipcRenderer.send('set-flash-choice', choice); }
     function changeCaptureMode(mode) { ipcRenderer.send('set-capture-mode', mode); }
-    function changeUpdateSource(v) { ipcRenderer.send('set-update-source', v); }
     function toggleForceGpu(on) { ipcRenderer.send('set-force-gpu', on); }
     function togglePerfDiag(on) { ipcRenderer.send('set-perf-diag', on); }
+    function toggleFitScreen(on) { ipcRenderer.send('set-fit-large-screen', on); }
+    function changeGameEntry(v) { ipcRenderer.send('set-game-entry', v); }
+    function changeFlashQuality(v) { ipcRenderer.send('set-flash-quality', v); }
     function toggleSoftwareRender(on) { ipcRenderer.send('set-software-render', on); }
     function refreshStorageInfo() { ipcRenderer.send('get-storage-info'); }
     function clearCaptures() { ipcRenderer.send('clear-captures'); }
@@ -1991,13 +2458,14 @@ function createLauncherWindow() {
       flash: {
         title: 'Flash 版本说明',
         html:
-          '<span class="h">内置国内版 34.0.0.376（纯净版）· 默认</span>' +
-          '<p>由国内正式版 34 制作，已去除广告与检测组件；版本号与国内最新版一致，兼容性最好。无需另外安装 Flash。</p>' +
-          '<p>少数机器可能提示「必要组件缺失 / 地区不相容」，这是国内 Flash 依赖后台组件（Flash Helper Service）导致的，一般不影响在本启动器里使用。</p>' +
-          '<span class="h">内置国际版 32.0.0.344</span>' +
-          '<p>Adobe 官方国际版，不依赖任何后台服务，最干净；但版本较旧（国际版 32.0.0.371 之后的版本已被 Adobe 远程停用），个别新内容可能不兼容。</p>' +
+          '<span class="h">内置国际版 32.0.0.344 · 默认</span>' +
+          '<p>Adobe 官方国际版，不依赖任何后台服务，进游戏最稳。版本较旧（国际版 32.0.0.371 之后的版本已被 Adobe 远程停用），个别新内容可能不兼容。</p>' +
+          '<span class="h">内置国内版 34.0.0.376（纯净版）</span>' +
+          '<p>由国内正式版 34 制作，已去除广告与检测组件，版本号与国内最新版一致。但部分机器会卡在进游戏，或提示「必要组件缺失 / 地区不相容」（国内 Flash 依赖 Flash Helper Service 后台组件）。</p>' +
           '<span class="h">怎么选</span>' +
-          '<p>默认用国内版 34 即可；如果出现画面异常、进不去游戏、卡在加载，切换到国际版 32 再试。两个版本都已内置，切换后需重启启动器生效。</p>'
+          '<p>默认用国际版 32 即可，两个版本都已内置。只有遇到个别新内容不兼容时，再手动切到国内版 34。切换后需重启启动器生效。</p>' +
+          '<span class="h">1.12.1 说明</span>' +
+          '<p>这次更新把所有用户的 Flash 统一重置为国际版 32（包括之前手动选过国内版 34 的），只重置一次；想继续用国内版 34 的，在这里重新选一次即可，以后不会再被改。</p>'
       },
       capture: {
         title: '抓包模式说明',
@@ -2027,6 +2495,32 @@ function createLauncherWindow() {
           '<span class="h">通用</span>' +
           '<p>切换模式后需重启启动器生效；导出必须走托盘「退出」，直接关窗口会导致数据写不完、导不出。</p>'
       },
+      gameEntry: {
+        title: '游戏入口说明',
+        html:
+          '<p>决定游戏窗口打开哪个页面，<b>新开窗口生效</b>。</p>' +
+          '<span class="h">官网入口（默认）</span>' +
+          '<p>直接打开火影官网 <code>huoying.qq.com</code>，登录页是官网样式。稳定、改动少。</p>' +
+          '<span class="h">QQ游戏大厅入口</span>' +
+          '<p>打开 QQ 游戏大厅内嵌页 <code>minigame.qq.com/.../app_frame/?appid=10190</code>，登录页显示「QQ游戏」。</p>' +
+          '<p>好处：登录后更容易抓到 skey 凭证，配合账号栏可以直接一键进游戏；部分机器观感更好。短板：页面结构由腾讯维护，改版时可能需要切回官网。</p>' +
+          '<span class="h">怎么选</span>' +
+          '<p>先按默认官网用；如果想用账号栏的凭证直连、或者想对比登录页/画面效果，再切到 QQ 游戏大厅。切回官网随时可以。</p>'
+      },
+      quality: {
+        title: '游戏画面画质说明',
+        html:
+          '<p>等同于游戏里右键 Flash 画面 →「品质」→ 低 / 中 / 高，设置一次即可，不用每次进游戏手动调。</p>' +
+          '<span class="h">高（默认）</span>' +
+          '<p>保留完整抗锯齿与画面平滑度，角色、场景边缘最细腻，最吃性能。</p>' +
+          '<span class="h">中</span>' +
+          '<p>画质与性能折中，适合想稍微流畅一点、但不想画面太糙的情况。</p>' +
+          '<span class="h">低</span>' +
+          '<p>关闭大部分抗锯齿与平滑处理，角色和场景边缘会明显变硬、变糙，但最省性能，多开 / 低配机器更流畅。</p>' +
+          '<span class="h">生效范围</span>' +
+          '<p>对<b>新开的游戏窗口和新标签</b>生效；已经加载完的标签可能保持原画质，需要新开标签才会完全切换。后台标签始终使用低画质，窗口失焦时整窗临时降低，回到前台后活跃标签恢复为你选的画质。</p>' +
+          '<p>注意：这是 Flash 的渲染品质，不是分辨率；调到低不会让画面变模糊发虚，主要是去掉了边缘平滑。</p>'
+      },
       gpu: {
         title: '强制启用 GPU 说明',
         html:
@@ -2055,19 +2549,6 @@ function createLauncherWindow() {
           '<p>开启后「强制启用 GPU」不起作用（软件渲染优先）。切换后需重启启动器生效。</p>' +
           '<p>如果只是偶尔卡一下、能自己恢复，不建议开这个。</p>'
       },
-      updateSource: {
-        title: '更新下载线路说明',
-        html:
-          '<span class="h">网站（默认）</span>' +
-          '<p>优点：稳定、不依赖外网；支持增量更新，后续版本通常只需下几 MB，国内下载不会卡死。</p>' +
-          '<p>短板：服务器带宽 6 Mbps（约 0.75 MB/s），首次整包 67MB 大约要 90 秒；同时下载的人多时会分摊带宽。</p>' +
-          '<span class="h">GitHub</span>' +
-          '<p>优点：能稳定直连 GitHub 时，速度可能到 2~10 MB/s，整包约 7~30 秒。</p>' +
-          '<p>短板：国内大部分网络连不上，要走加速代理；代理高峰期可能只有几十 KB/s，时快时慢，不稳定。</p>' +
-          '<span class="h">怎么选</span>' +
-          '<p>不确定就用默认「网站」，最稳。用浏览器下载 GitHub 上的安装包能跑到 2MB/s 以上，再切到 GitHub。</p>' +
-          '<p>两个选项都会优先取「版本最高」的源，另一个只作兜底。切换后下次检查更新生效。</p>'
-      }
     };
 
     const helpMask = document.getElementById('helpMask');
@@ -2114,16 +2595,24 @@ function createLauncherWindow() {
       const s = document.getElementById('captureModeSel');
       if (s) s.value = mode || 'off';
     });
-    ipcRenderer.on('update-source-state', function (e, v) {
-      const s = document.getElementById('updateSourceSel');
-      if (s) s.value = (v === 'github') ? 'github' : 'mirror';
-    });
     ipcRenderer.on('force-gpu-state', function (e, on) {
       const c = document.getElementById('gpuChk');
       if (c) c.checked = !!on;
     });
     ipcRenderer.on('perf-diag-state', function (e, on) {
       const c = document.getElementById('perfChk');
+      if (c) c.checked = !!on;
+    });
+    ipcRenderer.on('game-entry-state', function (e, v) {
+      const s = document.getElementById('gameEntrySel');
+      if (s) s.value = v || 'official';
+    });
+    ipcRenderer.on('flash-quality-state', function (e, v) {
+      const s = document.getElementById('qualitySel');
+      if (s) s.value = (v === 'low' || v === 'medium') ? v : 'high';
+    });
+    ipcRenderer.on('fit-large-screen-state', function (e, on) {
+      const c = document.getElementById('fitScreenChk');
       if (c) c.checked = !!on;
     });
     ipcRenderer.on('software-render-state', function (e, on) {
@@ -2167,8 +2656,10 @@ function createLauncherWindow() {
     launcherWindow.webContents.send('capture-mode-state', normalizeCaptureMode(config.captureMode));
     launcherWindow.webContents.send('force-gpu-state', config.forceGpu !== false);
     launcherWindow.webContents.send('perf-diag-state', !!config.perfDiag);
+    launcherWindow.webContents.send('game-entry-state', normalizeGameEntry(config.gameEntry));
+    launcherWindow.webContents.send('flash-quality-state', normalizeFlashQuality(config.flashQuality));
+    launcherWindow.webContents.send('fit-large-screen-state', config.fitLargeScreen !== false);
     launcherWindow.webContents.send('software-render-state', !!config.softwareRender);
-    launcherWindow.webContents.send('update-source-state', config.updateSource === 'github' ? 'github' : 'mirror');
     // 窗口重建时补发在线人数，避免空白
     const lastOnline = online.getLast();
     launcherWindow.webContents.send('online-update', lastOnline || { fire: null, mini: null });
@@ -2202,6 +2693,9 @@ function createGameWindow(url, gameName, account, opts) {
   // plain = 非火影（如 4399）：加载极简窗口，不显示火影工具栏
   const plain = !!(opts && opts.plain);
 
+  // 游戏入口：官网（默认）/ QQ 游戏大厅 app_frame（闪客入口，登录页显示 QQ游戏）
+  if (!plain && !(opts && opts.exactUrl) && config.gameEntry === 'qqgame') url = QQGAME_ENTRY_URL;
+
   // 本窗口的会话槽位：让不同窗口的标签使用互不冲突的 partition（避免多窗口串号）
   const windowSlot = ++gameWindowSlotCounter;
 
@@ -2221,7 +2715,7 @@ function createGameWindow(url, gameName, account, opts) {
   }
 
   const { width, height } = primaryDisplay.workAreaSize;
-  const toolbarHeight = 36;
+  const toolbarHeight = 44;
 
   const maxGameWidth = 1440;
   const maxGameHeight = 810;
@@ -2278,12 +2772,35 @@ function createGameWindow(url, gameName, account, opts) {
   // 同时统计「标签页数」用于在线人数：每附加一个 webview 算 1，销毁时减 1
   const winLabel = 'game#slot' + (windowSlot || '?');
   const tabEntry = { win, plain: !!plain, tabs: 0 };
+  const guestWcs = [];   // 该窗口里的 webview 客进程（用于最小化/还原后强制重绘）
+
+  // Flash 窗口化插件在最小化→还原、最大化→还原后经常不重绘（画面一动不动）。
+  // 这里对宿主页和所有 webview 客进程强制 invalidate 一次，让合成器重新出图。
+  const repaintWindow = () => {
+    if (!win || win.isDestroyed()) return;
+    try { win.webContents.invalidate(); } catch (e) { /* ignore */ }
+    guestWcs.forEach((g) => {
+      try { if (!g.isDestroyed()) g.invalidate(); } catch (e) { /* ignore */ }
+    });
+  };
+
   attachWindowWatch(win.webContents, winLabel + ' host');
+  attachShortcuts(win.webContents, win);
   win.webContents.on('did-attach-webview', (event, guest) => {
     attachWindowWatch(guest, winLabel + ' webview');
+    attachShortcuts(guest, win);
+    attachCredentialCapture(guest);
+    attachFlashQualityPatch(guest);
+    // 禁用捏合缩放；页面缩放/大屏适配由 game.html 统一处理，这里不要再锁缩放
+    try { guest.setVisualZoomLevelLimits(1, 1); } catch (e) { /* ignore */ }
+    guestWcs.push(guest);
     tabEntry.tabs++;
     try {
-      guest.once('destroyed', () => { tabEntry.tabs = Math.max(0, tabEntry.tabs - 1); });
+      guest.once('destroyed', () => {
+        tabEntry.tabs = Math.max(0, tabEntry.tabs - 1);
+        const i = guestWcs.indexOf(guest);
+        if (i >= 0) guestWcs.splice(i, 1);
+      });
     } catch (e) { /* ignore */ }
   });
 
@@ -2300,7 +2817,9 @@ function createGameWindow(url, gameName, account, opts) {
       account: plain ? null : account,
       diskCache: config.diskCache !== false,
       plain: plain,
-      windowSlot: windowSlot
+      windowSlot: windowSlot,
+      flashQuality: normalizeFlashQuality(config.flashQuality),
+      fitLargeScreen: config.fitLargeScreen !== false
     });
 
     // 发送当前配置
@@ -2417,24 +2936,24 @@ function createGameWindow(url, gameName, account, opts) {
     saveAccounts();
   });
 
-  addListener('launch-account-window', (event, accountId) => {
-    // 在当前窗口添加新标签并自动登录
+  addListener('launch-account-window', (event, payload) => {
+    // 在当前窗口添加新标签并自动登录（payload 兼容旧的 accountId 字符串）
     const senderWin = BrowserWindow.fromWebContents(event.sender);
     if (senderWin === win) {
+      const accountId = (payload && typeof payload === 'object') ? payload.accountId : payload;
+      const zoneId = (payload && typeof payload === 'object') ? payload.zoneId : '';
       const account = accounts.find(a => a.id === accountId);
-      if (account) {
-        senderWin.webContents.send('launch-account', account);
-      }
+      if (account) senderWin.webContents.send('launch-account', pickAccountForZone(account, zoneId));
     }
   });
 
   addListener('launch-all-accounts-window', (event) => {
-    // 在当前窗口启动所有账号
+    // 在当前窗口启动所有账号（每个账号用它最后一次的区服）
     const senderWin = BrowserWindow.fromWebContents(event.sender);
     if (senderWin === win) {
       const validAccounts = accounts.filter(a => a.qq);
       validAccounts.forEach(account => {
-        senderWin.webContents.send('launch-account', account);
+        senderWin.webContents.send('launch-account', pickAccountForZone(account, account.lastZoneId));
       });
     }
   });
@@ -2455,8 +2974,96 @@ function createGameWindow(url, gameName, account, opts) {
     saveConfig();
   });
 
+  // 窗口状态变化记一笔（排查「最小化后点不了」这类问题用，量很小）
+  ['minimize', 'restore', 'maximize', 'unmaximize', 'show', 'hide'].forEach((evt) => {
+    win.on(evt, () => {
+      if (!win || win.isDestroyed()) return;
+      logPerfEvent('WIN', winLabel + ' ' + evt + ' maximized=' + win.isMaximized() + ' visible=' + win.isVisible());
+    });
+  });
+
+  // 窗口尺寸变化（最大化/还原/拖边框）结束后统一重绘一次，避免 Flash 插件停在旧画面上
+  let resizeRepaintTimer = null;
   win.on('resize', () => {
-    // 窗口大小变化由 webview 自己处理
+    if (resizeRepaintTimer) clearTimeout(resizeRepaintTimer);
+    resizeRepaintTimer = setTimeout(() => {
+      resizeRepaintTimer = null;
+      repaintWindow();
+    }, 220);
+  });
+
+  // 最大化 / 最小化还原后，webview 客进程的视口有时不跟着宿主重新布局：
+  // 表现为「画面没贴合窗口，拖一下才正常」。用 1px 尺寸抖动强制一次真实 relayout。
+  const nudgeResize = () => {
+    if (!win || win.isDestroyed()) return;
+    const b = win.getBounds();
+    try { win.setBounds({ x: b.x, y: b.y, width: b.width + 1, height: b.height + 1 }, false); } catch (e) { /* ignore */ }
+    setTimeout(() => {
+      if (!win || win.isDestroyed()) return;
+      try { win.setBounds(b, false); } catch (e) { /* ignore */ }
+      repaintWindow();
+    }, 60);
+  };
+  win.on('unmaximize', () => setTimeout(nudgeResize, 40));
+  win.on('restore', () => setTimeout(nudgeResize, 40));
+
+  // 手动拖动缩放时保持游戏比例 16:9（1920×1080），与游戏舞台上限一致
+  const GAME_ASPECT = 1920 / 1080;
+  let lastResizeEdge = '';
+  let manualResizing = false;
+  let aspectApplying = false;
+
+  // 按最后拖动的边把窗口尺寸修正到游戏比例
+  const fitAspectBounds = (bounds, edge) => {
+    const vertical = edge === 'top' || edge === 'bottom';
+    let w = bounds.width;
+    let h = bounds.height - toolbarHeight;
+    if (vertical) w = Math.round(h * GAME_ASPECT);
+    else h = Math.round(w / GAME_ASPECT);
+    w = Math.max(820, w);
+    h = Math.max(461, h);
+    const out = { x: bounds.x, y: bounds.y, width: w, height: h + toolbarHeight };
+    if (edge.indexOf('left') >= 0) out.x = bounds.x + (bounds.width - w);
+    if (edge.indexOf('top') >= 0) out.y = bounds.y + (bounds.height - (h + toolbarHeight));
+    return out;
+  };
+
+  win.on('will-resize', (event, newBounds, details) => {
+    if (plain || !newBounds) return;
+    try {
+      event.preventDefault();
+      const edge = String((details && details.edge) || lastResizeEdge || '');
+      lastResizeEdge = edge;
+      manualResizing = true;
+      win.setBounds(fitAspectBounds(newBounds, edge), false);
+    } catch (e) { /* ignore */ }
+  });
+
+  // 松开鼠标的那一下不会再触发 will-resize，最后一次拖动的增量会原样留下。
+  // 等尺寸稳定后再按最后拖动的边补一次修正，否则边缘总会差最后一点。
+  const correctAspectAfterDrag = () => {
+    if (plain || !win || win.isDestroyed()) return;
+    if (aspectApplying) return;
+    if (win.isMaximized() || win.isFullScreen() || win.isMinimized()) return;
+    // 只修正手动拖边；系统贴边/程序化改尺寸不强行改比例
+    if (!manualResizing) return;
+    try {
+      const b = win.getBounds();
+      const fit = fitAspectBounds(b, lastResizeEdge);
+      const need = Math.abs(fit.width - b.width) > 1 || Math.abs(fit.height - b.height) > 1;
+      manualResizing = false;
+      if (!need) return;
+      aspectApplying = true;
+      win.setBounds(fit, false);
+      setTimeout(() => { aspectApplying = false; }, 150);
+    } catch (e) { /* ignore */ }
+  };
+  win.on('resized', () => setTimeout(correctAspectAfterDrag, 0));
+  let aspectTimer = null;
+  win.on('resize', () => {
+    if (aspectApplying) return;
+    if (aspectTimer) clearTimeout(aspectTimer);
+    aspectTimer = setTimeout(correctAspectAfterDrag, 120);
   });
 
   win.on('blur', () => {
@@ -2473,6 +3080,18 @@ function createGameWindow(url, gameName, account, opts) {
 
   win.on('restore', () => {
     win.webContents.send('window-restored');
+    // 部分情况下从任务栏恢复只触发 show/focus，不触发 restore；这里主动聚焦一次
+    try { win.focus(); } catch (e) { /* ignore */ }
+    // 最小化→还原后 Flash 插件常常不重绘：分两次轻推，覆盖「一帧都不出」的情况
+    setTimeout(repaintWindow, 150);
+    setTimeout(repaintWindow, 700);
+  });
+
+  // 兜底：从任务栏点回来时即使没触发 restore，也通知渲染层解除暂停并把窗口拉到前台
+  win.on('show', () => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send('window-restored');
+    setTimeout(repaintWindow, 200);
   });
 
   win.on('closed', () => {
@@ -2928,28 +3547,30 @@ ipcMain.on('remove-account', (event, accountId) => {
   event.reply('accounts-update', accounts);
 });
 
-ipcMain.on('launch-account', (event, accountId) => {
+ipcMain.on('launch-account', (event, payload) => {
+  const accountId = (payload && typeof payload === 'object') ? payload.accountId : payload;
+  const zoneId = (payload && typeof payload === 'object') ? payload.zoneId : '';
   const account = accounts.find(a => a.id === accountId);
   if (!account) {
     log('[账号启动] 未找到账号: ' + accountId);
     return;
   }
-  
-  const winName = account.windowName || account.qq;
+  const picked = pickAccountForZone(account, zoneId);
+  const winName = accountLabelForZone(picked, picked && picked._selectedZoneId);
   log('[账号启动] ====================');
   log('[账号启动] 启动账号: ' + winName + ' (' + account.qq + ')');
   log('[账号启动] 游戏窗口数量: ' + gameWindows.length);
-  
+
   let targetGameWindow = gameWindows.find(w => w.win && !w.win.isDestroyed());
-  
+
   if (!targetGameWindow) {
     log('[账号启动] 没有找到游戏窗口，创建新窗口');
-    createGameWindow(DEFAULT_URL, winName, account);
-    
+    createGameWindow(DEFAULT_URL, winName, picked);
+
     setTimeout(() => {
       const newWindow = gameWindows.find(w => w.win && !w.win.isDestroyed());
       if (newWindow && newWindow.localTabs && newWindow.localTabs[0]) {
-        newWindow.localTabs[0]._pendingAccount = { qq: account.qq, qqPwd: account.qqPwd || '' };
+        newWindow.localTabs[0]._pendingAccount = { qq: picked.qq, qqPwd: picked.qqPwd || '', credential: picked.credential || null, id: picked.id };
         log('[账号启动] 已设置自动登录: ' + account.qq);
       }
     }, 500);
@@ -2957,11 +3578,11 @@ ipcMain.on('launch-account', (event, accountId) => {
     log('[账号启动] 找到现有窗口，窗口ID: ' + targetGameWindow.win.id);
     log('[账号启动] 当前标签数量: ' + (targetGameWindow.localTabs ? targetGameWindow.localTabs.length : 0));
     log('[账号启动] 在现有窗口添加标签: ' + winName);
-    
-    const newTab = addTabToGameWindow(targetGameWindow, winName, account);
+
+    const newTab = addTabToGameWindow(targetGameWindow, winName, picked);
     if (newTab) {
       log('[账号启动] 新标签创建成功，索引: ' + newTab.index);
-      newTab._pendingAccount = { qq: account.qq, qqPwd: account.qqPwd || '' };
+      newTab._pendingAccount = { qq: picked.qq, qqPwd: picked.qqPwd || '', credential: picked.credential || null, id: picked.id };
       setupAutoLogin(newTab);
       log('[账号启动] 已设置自动登录: ' + account.qq);
     } else {
@@ -2973,32 +3594,33 @@ ipcMain.on('launch-account', (event, accountId) => {
 ipcMain.on('launch-all-accounts', () => {
   const validAccounts = accounts.filter(a => a.qq);
   log('[一键启动] 准备启动 ' + validAccounts.length + ' 个账号');
-  
+
   let targetGameWindow = gameWindows.find(w => w.win && !w.win.isDestroyed());
-  
+
   validAccounts.forEach((account, index) => {
-    const winName = account.windowName || account.qq;
-    
+    const picked = pickAccountForZone(account, account.lastZoneId);
+    const winName = accountLabelForZone(picked, picked && picked._selectedZoneId);
+
     if (index === 0 && !targetGameWindow) {
       log('[一键启动] 第1个账号，创建新窗口: ' + winName);
-      const win = createGameWindow(DEFAULT_URL, winName, account);
+      const win = createGameWindow(DEFAULT_URL, winName, picked);
       targetGameWindow = gameWindows.find(w => w.win === win);
       if (targetGameWindow && targetGameWindow.localTabs && targetGameWindow.localTabs[0]) {
-        targetGameWindow.localTabs[0]._pendingAccount = { qq: account.qq, qqPwd: account.qqPwd || '' };
+        targetGameWindow.localTabs[0]._pendingAccount = { qq: picked.qq, qqPwd: picked.qqPwd || '', credential: picked.credential || null, id: picked.id };
         setupAutoLogin(targetGameWindow.localTabs[0]);
       }
     } else {
       log('[一键启动] 添加标签: ' + winName);
       if (targetGameWindow) {
-        const newTab = addTabToGameWindow(targetGameWindow, winName, account);
+        const newTab = addTabToGameWindow(targetGameWindow, winName, picked);
         if (newTab) {
-          newTab._pendingAccount = { qq: account.qq, qqPwd: account.qqPwd || '' };
+          newTab._pendingAccount = { qq: picked.qq, qqPwd: picked.qqPwd || '', credential: picked.credential || null, id: picked.id };
           setupAutoLogin(newTab);
         }
       }
     }
   });
-  
+
   log('[一键启动] 完成启动 ' + validAccounts.length + ' 个账号');
 });
 
@@ -3120,14 +3742,14 @@ function addTabToGameWindow(gameWindow, name, account) {
 
 app.whenReady().then(() => {
   log('应用启动');
+  resetSettingsIfNeeded();
   loadConfig();
   loadAccounts();
   detectWindowsVersion();
   initSpeedControl();
   updater.init({
     log,
-    currentVersion: CURRENT_VERSION,
-    getUpdateSource: () => config.updateSource
+    currentVersion: CURRENT_VERSION
   });
 
   // 初始化流量抓包层（关闭时零副作用）
@@ -3283,6 +3905,32 @@ app.whenReady().then(() => {
     log('性能诊断日志已' + (on ? '开启' : '关闭'));
   });
 
+  // 游戏入口：新开窗口生效
+  ipcMain.on('set-game-entry', (event, v) => {
+    config.gameEntry = normalizeGameEntry(v);
+    saveConfig();
+    log('游戏入口已设为: ' + config.gameEntry);
+  });
+
+  // 游戏画面画质：新开窗口 / 新标签生效
+  ipcMain.on('set-flash-quality', (event, v) => {
+    config.flashQuality = normalizeFlashQuality(v);
+    saveConfig();
+    log('游戏画面画质已设为: ' + config.flashQuality);
+    gameWindows.forEach((gw) => {
+      if (gw && gw.win && !gw.win.isDestroyed()) {
+        gw.win.webContents.send('flash-quality-update', config.flashQuality);
+      }
+    });
+  });
+
+  // 大屏适配：对新开窗口生效
+  ipcMain.on('set-fit-large-screen', (event, on) => {
+    config.fitLargeScreen = !!on;
+    saveConfig();
+    log('大屏适配已' + (on ? '开启' : '关闭'));
+  });
+
   // 抓包缓存：查询占用 / 一键清理（设置面板用）
   ipcMain.on('get-storage-info', (event) => {
     try { event.reply('storage-info', captureStorageInfo()); } catch (e) {}
@@ -3303,14 +3951,6 @@ app.whenReady().then(() => {
     try {
       event.reply('storage-cleared', Object.assign({ removed, freed }, captureStorageInfo()));
     } catch (e) {}
-  });
-
-  // 更新下载线路：网站优先 / GitHub 优先（无需重启，下次检查更新生效）
-  ipcMain.on('set-update-source', (event, v) => {
-    config.updateSource = (v === 'github') ? 'github' : 'mirror';
-    saveConfig();
-    log('更新下载线路已切换为: ' + config.updateSource);
-    try { event.reply('update-source-state', config.updateSource); } catch (e) {}
   });
 
   // 软件渲染（兼容模式）：启动参数需在 app ready 前设置，故提示重启
