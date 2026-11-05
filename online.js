@@ -17,6 +17,7 @@ let log = () => {};
 let getCounts = () => ({ fire: 0, mini: 0 });
 let onUpdate = () => {};
 let clientId = '';
+let version = '';
 
 let last = null;          // { fire, mini }
 let lastOkAt = 0;
@@ -73,7 +74,7 @@ function postReport(body) {
 async function tick() {
   if (!clientId) return;
   const c = getCounts() || { fire: 0, mini: 0 };
-  const data = await postReport({ id: clientId, fire: c.fire, mini: c.mini });
+  const data = await postReport({ id: clientId, fire: c.fire, mini: c.mini, version: version });
 
   if (data && typeof data.fire === 'number' && typeof data.mini === 'number') {
     lastOkAt = Date.now();
@@ -93,6 +94,7 @@ async function tick() {
 function init(opts) {
   log = (opts && opts.log) || (() => {});
   clientId = (opts && opts.clientId) || '';
+  version = (opts && opts.version) || '';
   getCounts = (opts && opts.getCounts) || (() => ({ fire: 0, mini: 0 }));
   onUpdate = (opts && opts.onUpdate) || (() => {});
 

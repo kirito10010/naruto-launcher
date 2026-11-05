@@ -50,6 +50,8 @@
     background:#fff; border:1px solid #e2ebf3; border-radius:10px; padding:8px 12px;
   }
   .clients b { color:#1e2a37; }
+  .clients a { color:#0d9488; text-decoration:none; font-family:Consolas, monospace; }
+  .clients a:hover { text-decoration:underline; }
 
   .rules { flex:1; min-height:0; display:flex; flex-direction:column;
     background:#fff; border:1px solid #e2ebf3; border-radius:12px; padding:12px; }
@@ -118,7 +120,7 @@
     </div>
   </section>
 
-  <div class="clients">在线客户端：<b id="clientCount">0</b> 个</div>
+  <div class="clients">在线客户端：<b id="clientCount">0</b> 个 · 数据面板：<a id="dashLink" href="#" title="在浏览器打开">http://127.0.0.1:10001/</a></div>
 
   <section class="rules">
     <div class="tabs">
@@ -140,7 +142,7 @@
   <footer>关闭窗口会最小化到托盘，右键托盘图标可退出</footer>
 
 <script>
-  const { ipcRenderer } = require('electron');
+  const { ipcRenderer, shell } = require('electron');
 
   let state = { running: false, error: '', port: 10001, clients: 0, fire: { actual: 0, display: 0 }, mini: { actual: 0, display: 0 }, virtual: { fire: [], mini: [] } };
   let editing = { fire: [], mini: [] };
@@ -161,6 +163,12 @@
     setText('miniActual', s.mini.actual);
     setText('clientCount', s.clients);
     setText('portText', ':' + s.port);
+    const dash = $('dashLink');
+    if (dash) {
+      const url = s.dashboardUrl || ('http://127.0.0.1:' + s.port + '/');
+      dash.textContent = url;
+      dash.href = url;
+    }
 
     const dot = $('dot');
     const errBar = $('errBar');
@@ -332,6 +340,15 @@
       renderRules();
     });
   });
+
+  const dashLink = $('dashLink');
+  if (dashLink) {
+    dashLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      const url = dashLink.getAttribute('href');
+      if (url && url !== '#') shell.openExternal(url);
+    });
+  }
 
   ipcRenderer.on('state', (e, s) => applyState(s));
   ipcRenderer.send('get-state');

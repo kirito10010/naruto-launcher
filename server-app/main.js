@@ -16,9 +16,19 @@ const WINDOW_H = 640;
 const TTL = 20 * 1000;            // 20 秒没上报 → 剔除（启动器 5 秒上报一次）
 const PRUNE_EVERY = 5 * 1000;
 const MAX_BODY = 1024;
+const DEFAULT_PORT = 10001;
+const SNAPSHOT_EVERY = 10 * 60 * 1000;          // 每 10 分钟一个统计点
+const STORAGE_VERSION = 1;
+const ACTIVE_MONTHS = 3;                        // 当前月 + 前两个月
+const MAX_HISTORY = 20000;                      // 兜底上限
 
 const CONFIG_DIR = path.join(app.getPath('appData'), 'hyol-online-server');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+// 新版按月分文件：stats/YYYY-MM.json；超过 3 个月的移到 stats/archive/
+const STATS_DIR = path.join(CONFIG_DIR, 'stats');
+const ARCHIVE_DIR = path.join(STATS_DIR, 'archive');
+const LEGACY_STATS_FILE = path.join(CONFIG_DIR, 'stats.json');
+const DASHBOARD_FILE = path.join(__dirname, 'dashboard.html');
 
 const DEFAULT_CONFIG = {
   port: 10001,
@@ -27,12 +37,17 @@ const DEFAULT_CONFIG = {
 
 let config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
 let server = null;
+let actualPort = 0;
 let serverError = '';
 let tray = null;
 let win = null;
 let isQuitting = false;
 
-const clients = new Map();   // id -> { fire, mini, ts }
+const clients = new Map();   // id -> { fire, mini, version, ts }
+let history = [];            // 10 分钟快照
+let bucketKey = 0;           // 当前 10 分钟桶
+let bucketSeen = new Map();  // 当前桶内出现过的 id -> version
+let dashboardHtml = '';
 
 // ---------- 配置 ----------
 function loadConfig() {
@@ -145,6 +160,281 @@ function displayTotals(nowMs) {
   return { fire, mini, clients: a.clients };
 }
 
+// ---------- 版本统计 / 10 分钟快照 ----------
+function normalizeVersion(v) {
+  const s = String(v || '').trim().slice(0, 32);
+  return s || 'unknown';
+}
+
+function currentVersionCounts() {
+  const out = {};
+  for (const c of clients.values()) {
+    const key = normalizeVersion(c.version);
+    out[key] = (out[key] || 0) + 1;
+  }
+  return out;
+}
+
+function bucketVersionCounts() {
+  const out = {};
+  for (const v of bucketSeen.values()) {
+    const key = normalizeVersion(v);
+    out[key] = (out[key] || 0) + 1;
+  }
+  return out;
+}
+
+// ---------- 按月存储 ----------
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function monthKeyFromTs(ts) {
+  const d = new Date(Number(ts) || Date.now());
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1);
+}
+
+function shiftMonthKey(key, delta) {
+  const parts = String(key || '').split('-');
+  const y = Number(parts[0]) || new Date().getFullYear();
+  const m = Number(parts[1]) || (new Date().getMonth() + 1);
+  const d = new Date(y, m - 1 + delta, 1);
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1);
+}
+
+// 当前月 + 前两个月，共 3 个自然月
+function activeMonthKeys(now) {
+  const cur = monthKeyFromTs(now || Date.now());
+  const out = [];
+  for (let i = ACTIVE_MONTHS - 1; i >= 0; i--) out.push(shiftMonthKey(cur, -i));
+  return out;
+}
+
+function ensureStatsDirs() {
+  fs.mkdirSync(STATS_DIR, { recursive: true });
+  fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
+}
+
+function mergeSnapshots(a, b) {
+  const map = new Map();
+  for (const r of (a || []).concat(b || [])) {
+    if (!r || !Number.isFinite(Number(r.ts))) continue;
+    map.set(Number(r.ts), r);
+  }
+  return Array.from(map.values()).sort((x, y) => Number(x.ts) - Number(y.ts));
+}
+
+function readMonthFile(file) {
+  try {
+    if (!fs.existsSync(file)) return [];
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const list = Array.isArray(data) ? data : (data && Array.isArray(data.snapshots) ? data.snapshots : []);
+    return list.filter((r) => r && Number.isFinite(Number(r.ts)));
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeMonthFile(file, month, snapshots) {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const json = JSON.stringify({
+      version: STORAGE_VERSION,
+      month: month,
+      snapshots: snapshots
+    });
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, json, 'utf8');
+    try {
+      fs.renameSync(tmp, file);
+    } catch (e) {
+      // Windows 目标被占用时退化为直接覆盖
+      fs.writeFileSync(file, json, 'utf8');
+      try { fs.unlinkSync(tmp); } catch (_) {}
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function monthFile(key, archived) {
+  return path.join(archived ? ARCHIVE_DIR : STATS_DIR, key + '.json');
+}
+
+// 旧版单文件 stats.json → 按月拆分；成功后改名 + 写标记，避免重复导入
+function migrateLegacyIfNeeded() {
+  const marker = path.join(STATS_DIR, '.legacy-migrated');
+  if (!fs.existsSync(LEGACY_STATS_FILE) || fs.existsSync(marker)) return;
+  try {
+    const data = JSON.parse(fs.readFileSync(LEGACY_STATS_FILE, 'utf8'));
+    const list = Array.isArray(data) ? data : (data && Array.isArray(data.snapshots) ? data.snapshots : []);
+    const byMonth = new Map();
+    for (const r of list) {
+      if (!r || !Number.isFinite(Number(r.ts))) continue;
+      const key = monthKeyFromTs(r.ts);
+      if (!byMonth.has(key)) byMonth.set(key, []);
+      byMonth.get(key).push(r);
+    }
+    const active = new Set(activeMonthKeys());
+    let allOk = true;
+    for (const [key, snaps] of byMonth) {
+      const file = monthFile(key, !active.has(key));
+      const merged = mergeSnapshots(readMonthFile(file), snaps);
+      if (!writeMonthFile(file, key, merged)) allOk = false;
+    }
+    if (!allOk) return;
+    try { fs.renameSync(LEGACY_STATS_FILE, LEGACY_STATS_FILE + '.migrated'); } catch (e) {}
+    fs.writeFileSync(marker, new Date().toISOString(), 'utf8');
+  } catch (e) {
+    // 保留旧文件，下次启动再试
+  }
+}
+
+// 超出当前 3 个月的月份文件移到 stats/archive/
+function archiveOldMonths() {
+  ensureStatsDirs();
+  const active = new Set(activeMonthKeys());
+  let files = [];
+  try { files = fs.readdirSync(STATS_DIR); } catch (e) { return; }
+  for (const f of files) {
+    const m = /^(\d{4}-\d{2})\.json$/.exec(f);
+    if (!m || active.has(m[1])) continue;
+    const src = path.join(STATS_DIR, f);
+    const dst = path.join(ARCHIVE_DIR, f);
+    try {
+      const merged = mergeSnapshots(readMonthFile(dst), readMonthFile(src));
+      if (writeMonthFile(dst, m[1], merged)) fs.unlinkSync(src);
+    } catch (e) { /* ignore */ }
+  }
+}
+
+// 只加载当前月 + 前两个月；更久的归档文件不读
+function loadHistory() {
+  try {
+    ensureStatsDirs();
+    migrateLegacyIfNeeded();
+    archiveOldMonths();
+    let list = [];
+    for (const key of activeMonthKeys()) {
+      list = list.concat(readMonthFile(path.join(STATS_DIR, key + '.json')));
+    }
+    history = mergeSnapshots([], list).slice(-MAX_HISTORY);
+    pruneHistory();
+  } catch (e) {
+    history = [];
+  }
+}
+
+function saveMonthForTs(ts) {
+  const key = monthKeyFromTs(ts);
+  const snaps = history.filter((r) => monthKeyFromTs(r.ts) === key);
+  writeMonthFile(monthFile(key, false), key, snaps);
+}
+
+function saveActiveMonths() {
+  ensureStatsDirs();
+  for (const key of activeMonthKeys()) {
+    const snaps = history.filter((r) => monthKeyFromTs(r.ts) === key);
+    if (snaps.length) writeMonthFile(monthFile(key, false), key, snaps);
+  }
+}
+
+function pruneHistory() {
+  const active = new Set(activeMonthKeys());
+  history = history.filter((r) => active.has(monthKeyFromTs(r.ts)));
+  if (history.length > MAX_HISTORY) history = history.slice(-MAX_HISTORY);
+}
+
+// 只有用户主动点「全部历史」时才读 archive，读完不常驻内存
+function readAllHistory() {
+  ensureStatsDirs();
+  migrateLegacyIfNeeded();
+  archiveOldMonths();
+  const files = [];
+  for (const dir of [STATS_DIR, ARCHIVE_DIR]) {
+    let names = [];
+    try { names = fs.readdirSync(dir); } catch (e) { names = []; }
+    for (const f of names) {
+      if (/^\d{4}-\d{2}\.json$/.test(f)) files.push(path.join(dir, f));
+    }
+  }
+  let all = [];
+  for (const file of files) all = all.concat(readMonthFile(file));
+  return mergeSnapshots([], all);
+}
+
+function currentBucketKey() {
+  return Math.floor(Date.now() / SNAPSHOT_EVERY);
+}
+
+function finalizeBucket(boundaryTs) {
+  const a = actualTotals();
+  const d = displayTotals(boundaryTs);
+  history.push({
+    ts: boundaryTs,
+    uniqueClients: bucketSeen.size,
+    uniqueVersions: bucketVersionCounts(),
+    clients: a.clients,
+    versions: currentVersionCounts(),
+    fire: { actual: a.fire, display: d.fire },
+    mini: { actual: a.mini, display: d.mini }
+  });
+  pruneHistory();
+  archiveOldMonths();
+  saveMonthForTs(boundaryTs);
+  pushState();
+}
+
+function ensureBucket() {
+  const nowKey = currentBucketKey();
+  if (!bucketKey) { bucketKey = nowKey; return; }
+  // 机器休眠/服务停了很久时不要补几百条空快照，只补最近一个点
+  if (nowKey - bucketKey > 12) {
+    bucketKey = nowKey - 1;
+    bucketSeen = new Map();
+  }
+  while (bucketKey < nowKey) {
+    finalizeBucket((bucketKey + 1) * SNAPSHOT_EVERY);
+    bucketKey++;
+    bucketSeen = new Map();
+  }
+}
+
+function snapshotTick() {
+  ensureBucket();
+}
+
+function dashboardOverview() {
+  const now = Date.now();
+  const a = actualTotals();
+  const d = displayTotals(now);
+  return {
+    ok: true,
+    now: now,
+    port: actualPort || DEFAULT_PORT,
+    preferredPort: DEFAULT_PORT,
+    running: !!server && !serverError,
+    error: serverError,
+    warning: '',
+    clients: a.clients,
+    fire: { actual: a.fire, display: d.fire },
+    mini: { actual: a.mini, display: d.mini },
+    versions: currentVersionCounts(),
+    active10m: {
+      clients: bucketSeen.size,
+      versions: bucketVersionCounts(),
+      since: bucketKey * SNAPSHOT_EVERY
+    },
+    lastSnapshot: history.length ? history[history.length - 1] : null,
+    recent: history.slice(-20),
+    historyCount: history.length,
+    storage: {
+      activeMonths: activeMonthKeys(now),
+      currentMonth: monthKeyFromTs(now),
+      historyCount: history.length
+    }
+  };
+}
+
 // ---------- HTTP ----------
 function send(res, code, obj) {
   const body = JSON.stringify(obj);
@@ -157,52 +447,178 @@ function send(res, code, obj) {
   res.end(body);
 }
 
+function sendHtml(res, code, html) {
+  const body = Buffer.from(String(html || ''), 'utf8');
+  res.writeHead(code, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': body.length,
+    'Cache-Control': 'no-store',
+    'Access-Control-Allow-Origin': '*'
+  });
+  res.end(body);
+}
+
+function handleRequest(req, res) {
+  let u;
+  try { u = new URL(req.url || '/', 'http://localhost'); }
+  catch (e) { return send(res, 400, { ok: false, error: 'bad url' }); }
+  const p = u.pathname;
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
+    });
+    return res.end();
+  }
+
+  // 远程数据可视化面板（无需登录）
+  if (req.method === 'GET' && (p === '/' || p === '/dashboard' || p === '/index.html')) {
+    if (!dashboardHtml) {
+      try { dashboardHtml = fs.readFileSync(DASHBOARD_FILE, 'utf8'); } catch (e) { dashboardHtml = ''; }
+    }
+    if (dashboardHtml) return sendHtml(res, 200, dashboardHtml);
+    return sendHtml(res, 500, '<!DOCTYPE html><meta charset="utf-8"><h1>数据面板文件缺失</h1><p>dashboard.html 未找到</p>');
+  }
+
+  if (req.method === 'GET' && p === '/health') {
+    return send(res, 200, {
+      ok: true,
+      port: actualPort || DEFAULT_PORT,
+      clients: clients.size,
+      versions: currentVersionCounts()
+    });
+  }
+
+  // 启动器上报后读取的在线人数
+  if (req.method === 'GET' && p === '/stats') {
+    return send(res, 200, Object.assign({ ok: true }, displayTotals(Date.now()), {
+      clients: clients.size,
+      versions: currentVersionCounts()
+    }));
+  }
+
+  if (req.method === 'GET' && p === '/api/overview') {
+    return send(res, 200, dashboardOverview());
+  }
+
+  if (req.method === 'GET' && p === '/api/history') {
+    const all = u.searchParams.get('all') === '1';
+    let hours = 0;
+    let since = 0;
+    let points;
+
+    if (all) {
+      // 只有主动点「全部历史」才读取 archive；读完不常驻内存
+      points = readAllHistory();
+    } else {
+      hours = Number(u.searchParams.get('hours')) || 24;
+      hours = Math.max(1, Math.min(2160, hours));
+      since = Date.now() - hours * 3600 * 1000;
+      points = history.filter((r) => Number(r.ts) >= since);
+    }
+
+    // 最多 720 个点，保证浏览器绘制流畅
+    const MAX_POINTS = 720;
+    if (points.length > MAX_POINTS) {
+      const step = Math.ceil(points.length / MAX_POINTS);
+      const sampled = [];
+      for (let i = 0; i < points.length; i += step) {
+        const group = points.slice(i, i + step);
+        const n = group.length || 1;
+        const uSum = group.reduce((s, r) => s + (Number(r.uniqueClients) || 0), 0);
+        const cSum = group.reduce((s, r) => s + (Number(r.clients) || 0), 0);
+        const last = group[group.length - 1];
+        sampled.push({
+          ts: last.ts,
+          uniqueClients: Math.round(uSum / n),
+          clients: Math.round(cSum / n),
+          fire: last.fire,
+          mini: last.mini
+        });
+      }
+      points = sampled;
+    }
+
+    return send(res, 200, {
+      ok: true,
+      scope: all ? 'all' : 'active',
+      hours: hours,
+      since: since,
+      points: points
+    });
+  }
+
+  if (req.method === 'GET' && p === '/favicon.ico') {
+    res.writeHead(204);
+    return res.end();
+  }
+
+  if (req.method === 'POST' && p === '/report') {
+    let raw = '';
+    let tooBig = false;
+    req.on('data', (c) => {
+      if (tooBig) return;
+      raw += c;
+      if (raw.length > MAX_BODY) tooBig = true;
+    });
+    req.on('end', () => {
+      if (tooBig) return send(res, 413, { ok: false, error: 'body too large' });
+      let data;
+      try { data = JSON.parse(raw || '{}'); }
+      catch (e) { return send(res, 400, { ok: false, error: 'invalid json' }); }
+
+      const id = String(data.id || '').slice(0, 64);
+      if (!id) return send(res, 400, { ok: false, error: 'missing id' });
+
+      const version = normalizeVersion(data.version);
+      clients.set(id, {
+        fire: clampInt(data.fire, 0, 999),
+        mini: clampInt(data.mini, 0, 999),
+        version: version,
+        ts: Date.now()
+      });
+
+      // 当前 10 分钟桶记录去重后的客户端 / 版本
+      ensureBucket();
+      bucketSeen.set(id, version);
+
+      return send(res, 200, Object.assign({ ok: true }, displayTotals(Date.now()), {
+        clients: clients.size,
+        versions: currentVersionCounts()
+      }));
+    });
+    return;
+  }
+
+  send(res, 404, { ok: false, error: 'not found' });
+}
+
 function startServer() {
   stopServer();
   serverError = '';
+  actualPort = 0;
 
-  server = http.createServer((req, res) => {
-    const p = (req.url || '/').split('?')[0];
+  // 上报接口和数据面板共用 10001：启动器 POST /report，浏览器 GET /
+  // 10001 被占用时不再偷偷换 10002，否则启动器仍上报 10001，会统计不到人数。
+  const port = DEFAULT_PORT;
+  const srv = http.createServer(handleRequest);
+  server = srv;
 
-    if (req.method === 'GET' && p === '/stats') return send(res, 200, displayTotals(Date.now()));
-    if (req.method === 'GET' && (p === '/' || p === '/health')) return send(res, 200, { ok: true });
-
-    if (req.method === 'POST' && p === '/report') {
-      let raw = '';
-      let tooBig = false;
-      req.on('data', (c) => {
-        if (tooBig) return;
-        raw += c;
-        if (raw.length > MAX_BODY) tooBig = true;
-      });
-      req.on('end', () => {
-        if (tooBig) return send(res, 413, { ok: false, error: 'body too large' });
-        let data;
-        try { data = JSON.parse(raw || '{}'); }
-        catch (e) { return send(res, 400, { ok: false, error: 'invalid json' }); }
-
-        const id = String(data.id || '').slice(0, 64);
-        if (!id) return send(res, 400, { ok: false, error: 'missing id' });
-
-        clients.set(id, {
-          fire: clampInt(data.fire, 0, 999),
-          mini: clampInt(data.mini, 0, 999),
-          ts: Date.now()
-        });
-        return send(res, 200, Object.assign({ ok: true }, displayTotals(Date.now())));
-      });
-      return;
-    }
-
-    send(res, 404, { ok: false, error: 'not found' });
-  });
-
-  server.on('error', (e) => {
-    serverError = '端口 ' + config.port + ' 启动失败：' + (e.code === 'EADDRINUSE' ? '已被占用' : e.message);
+  srv.once('error', (e) => {
+    if (server !== srv) return;
+    try { srv.close(); } catch (_) {}
+    server = null;
+    actualPort = 0;
+    serverError = (e.code === 'EADDRINUSE')
+      ? '端口 10001 已被占用：请先退出旧版在线人数后台，再重启本服务'
+      : '端口 10001 启动失败：' + e.message;
     pushState();
   });
 
-  server.listen(config.port, '0.0.0.0', () => {
+  srv.listen(port, '0.0.0.0', () => {
+    actualPort = port;
     serverError = '';
     pushState();
   });
@@ -213,6 +629,7 @@ function stopServer() {
     try { server.close(); } catch (e) {}
     server = null;
   }
+  actualPort = 0;
 }
 
 setInterval(() => {
@@ -227,13 +644,20 @@ function buildState() {
   const now = Date.now();
   const a = actualTotals();
   const d = displayTotals(now);
+  const port = actualPort || DEFAULT_PORT;
   return {
     running: !!server && !serverError,
     error: serverError,
-    port: config.port,
+    port: port,
+    preferredPort: DEFAULT_PORT,
+    dashboardUrl: 'http://127.0.0.1:' + port + '/',
+    warning: '',
     clients: a.clients,
     fire: { actual: a.fire, display: d.fire },
     mini: { actual: a.mini, display: d.mini },
+    versions: currentVersionCounts(),
+    active10m: bucketSeen.size,
+    historyCount: history.length,
     virtual: config.virtual,
     now: now
   };
@@ -367,9 +791,13 @@ ipcMain.handle('restart-server', () => {
 // ---------- 启动 ----------
 app.whenReady().then(() => {
   loadConfig();
+  loadHistory();
+  bucketKey = currentBucketKey();
+  try { dashboardHtml = fs.readFileSync(DASHBOARD_FILE, 'utf8'); } catch (e) { dashboardHtml = ''; }
   createWindow();
   createTray();
   startServer();
+  setInterval(snapshotTick, 15 * 1000);
   setInterval(pushState, 1000);
 });
 
@@ -377,4 +805,8 @@ app.on('window-all-closed', () => {
   // 关窗口不退出，留在托盘
 });
 
-app.on('before-quit', () => { isQuitting = true; stopServer(); });
+app.on('before-quit', () => {
+  isQuitting = true;
+  saveActiveMonths();
+  stopServer();
+});

@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>火影OL 数据面板</title>
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --bg: #f5f8fc;
+    --panel: #ffffff;
+    --text: #172532;
+    --sub: #718294;
+    --muted: #9aa8b6;
+    --border: #e5edf4;
+    --border-soft: #eef3f8;
+    --accent: #0d9488;
+    --accent-soft: #e8f8f5;
+    --blue: #3b82f6;
+    --blue-soft: #eaf2ff;
+    --orange: #ea580c;
+    --orange-soft: #fff3e8;
+    --violet: #7c3aed;
+    --violet-soft: #f1eaff;
+    --shadow: 0 1px 2px rgba(16,24,40,.03), 0 10px 28px rgba(16,24,40,.05);
+    --radius: 16px;
+  }
+  html, body { min-height: 100%; }
+  body {
+    margin: 0;
+    color: var(--text);
+    background: linear-gradient(180deg, #f8fbfd 0%, var(--bg) 100%);
+    font-family: 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(820px 460px at 6% -12%, rgba(45,212,191,.12), transparent 62%),
+      radial-gradient(760px 460px at 102% -4%, rgba(59,130,246,.10), transparent 58%);
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #d7e3ed; border: 2px solid var(--bg); border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: #c4d4e2; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  .wrap { width: min(1320px, calc(100% - 40px)); margin: 0 auto; padding: 26px 0 18px; }
+
+  /* ---------- 顶部 ---------- */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 18px; flex-wrap: wrap; margin-bottom: 20px;
+  }
+  .brand { display: flex; align-items: center; gap: 13px; min-width: 0; }
+  .logo {
+    width: 46px; height: 46px; border-radius: 14px; flex: 0 0 46px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 20px; font-weight: 800;
+    background: linear-gradient(135deg, #14b8a6 0%, #3b82f6 100%);
+    box-shadow: 0 9px 22px rgba(20,184,166,.24);
+  }
+  h1 { margin: 0; font-size: 20px; line-height: 1.2; letter-spacing: .2px; }
+  .subtitle { margin-top: 5px; color: var(--sub); font-size: 12.5px; }
+  .statusbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 34px; padding: 0 12px; border: 1px solid var(--border);
+    border-radius: 999px; background: var(--panel); box-shadow: var(--shadow);
+    color: var(--sub); font-size: 12px; white-space: nowrap;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #c7d2dd; flex: 0 0 8px; }
+  .dot.on { background: #14b8a6; box-shadow: 0 0 0 4px rgba(20,184,166,.13); }
+  .dot.off { background: #ef4444; box-shadow: 0 0 0 4px rgba(239,68,68,.12); }
+  .chip {
+    font-family: Consolas, 'Microsoft YaHei', monospace; font-size: 11.5px;
+    color: var(--text); background: #f2f7fb; border-radius: 7px; padding: 3px 7px;
+  }
+  .btn {
+    height: 34px; padding: 0 13px; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--panel); color: #516274;
+    font-size: 12px; font-family: inherit; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    box-shadow: 0 1px 2px rgba(16,24,40,.03); transition: .16s ease;
+  }
+  .btn:hover { border-color: #cfe0ec; color: var(--accent); background: #fbfeff; }
+  .btn svg { width: 14px; height: 14px; }
+  .btn:active { transform: translateY(1px); }
+
+  .warn {
+    display: none; margin-bottom: 14px; padding: 11px 15px;
+    border: 1px solid #fde3ad; border-radius: 12px;
+    background: #fff9eb; color: #946200; font-size: 12.5px; line-height: 1.6;
+  }
+  .warn.show { display: block; }
+
+  /* ---------- 概览卡片 ---------- */
+  .cards {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px; margin-bottom: 14px;
+  }
+  .card {
+    position: relative; min-width: 0; overflow: hidden;
+    padding: 17px 18px 15px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--panel);
+    box-shadow: var(--shadow);
+  }
+  .card::before {
+    content: ''; position: absolute; left: 18px; top: 0;
+    width: 42px; height: 3px; border-radius: 0 0 4px 4px;
+    background: linear-gradient(90deg, #14b8a6, #3b82f6); opacity: .9;
+  }
+  .card-label { display: flex; align-items: center; gap: 8px; color: var(--sub); font-size: 12px; margin-bottom: 13px; }
+  .card-icon {
+    width: 23px; height: 23px; border-radius: 7px; flex: 0 0 23px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .card-icon svg { width: 14px; height: 14px; }
+  .card.fire .card-icon { background: var(--orange-soft); color: var(--orange); }
+  .card.mini .card-icon { background: var(--blue-soft); color: var(--blue); }
+  .card.versions .card-icon { background: var(--violet-soft); color: var(--violet); }
+  .card-value {
+    display: flex; align-items: baseline; gap: 6px;
+    font-size: clamp(26px, 2.6vw, 33px); line-height: 1; font-weight: 800;
+    letter-spacing: -.6px; color: var(--text); min-width: 0;
+  }
+  .card-value small { font-size: 12px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+  .card-foot { margin-top: 10px; color: var(--sub); font-size: 11.5px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .card-foot b { color: var(--text); font-weight: 600; }
+
+  /* ---------- 面板通用 ---------- */
+  .grid {
+    display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
+    gap: 14px; margin-bottom: 14px; align-items: stretch;
+  }
+  .stack { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .panel {
+    min-width: 0; padding: 18px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow);
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 14px;
+  }
+  .panel-title { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: .1px; }
+  .panel-sub { color: var(--muted); font-size: 11.5px; font-weight: 400; margin-left: 6px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 25px; padding: 0 9px; border-radius: 999px;
+    background: #f3f8fc; color: var(--sub); font-size: 11px; white-space: nowrap;
+  }
+  .badge b { color: var(--text); font-weight: 600; }
+
+  /* ---------- 版本分布 ---------- */
+  .vlist { display: flex; flex-direction: column; }
+  .vrow {
+    display: grid; grid-template-columns: 104px minmax(0, 1fr) 96px;
+    align-items: center; gap: 12px; padding: 9px 0;
+    border-bottom: 1px dashed var(--border-soft);
+  }
+  .vrow:last-child { border-bottom: 0; }
+  .vname {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: #33475b; font-family: Consolas, 'Microsoft YaHei', monospace; font-size: 12.5px;
+  }
+  .vbar { height: 8px; border-radius: 999px; background: #eff4f9; overflow: hidden; }
+  .vbar i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #14b8a6, #3b82f6); }
+  .vmeta { text-align: right; color: var(--muted); font-size: 11px; line-height: 1.35; white-space: nowrap; }
+  .vmeta b { color: var(--text); font-size: 12.5px; font-weight: 700; }
+  .vmeta .active { color: var(--accent); }
+
+  /* ---------- 统计说明 ---------- */
+  .note-panel { display: flex; flex-direction: column; }
+  .note-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 13px; }
+  .note-list li { display: flex; align-items: flex-start; gap: 10px; }
+  .note-dot { width: 7px; height: 7px; border-radius: 50%; background: #14b8a6; margin-top: 6px; flex: 0 0 7px; }
+  .note-dot.blue { background: #3b82f6; }
+  .note-dot.violet { background: #7c3aed; }
+  .note-dot.orange { background: #ea580c; }
+  .note-list b { display: block; margin-bottom: 2px; color: var(--text); font-size: 12px; font-weight: 600; }
+  .note-list p { margin: 0; color: var(--sub); font-size: 11.5px; line-height: 1.65; }
+  .note-foot {
+    margin-top: auto; padding-top: 13px; border-top: 1px dashed var(--border-soft);
+    color: var(--muted); font-size: 11px; line-height: 1.65;
+  }
+  .note-foot code {
+    background: #f2f7fb; color: #5d7185; border-radius: 5px;
+    padding: 2px 5px; font-family: Consolas, monospace; font-size: 10.5px;
+  }
+
+  /* ---------- 快照表 ---------- */
+  .table-scroll { overflow-x: auto; margin: 0 -2px; padding: 0 2px 2px; }
+  .table-scroll::-webkit-scrollbar { height: 8px; }
+  .table-scroll::-webkit-scrollbar-thumb { background: #dbe6ef; border: 2px solid #fff; border-radius: 99px; }
+  .table-scroll::-webkit-scrollbar-track { background: transparent; }
+  table { width: 100%; min-width: 540px; border-collapse: collapse; font-size: 12px; }
+  th {
+    padding: 0 8px 10px; text-align: left; white-space: nowrap;
+    color: var(--muted); font-size: 11px; font-weight: 600;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 10px 8px; white-space: nowrap; color: #425466;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr { transition: background .14s; }
+  tbody tr:hover { background: #f8fbfd; }
+  td.num { text-align: right; font-family: Consolas, 'Microsoft YaHei', monospace; }
+  td .ver {
+    display: inline-block; max-width: 96px; overflow: hidden;
+    text-overflow: ellipsis; vertical-align: bottom;
+  }
+
+  /* ---------- 趋势 ---------- */
+  .trend { margin-bottom: 14px; }
+  .trend-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; flex-wrap: wrap; margin-bottom: 8px;
+  }
+  .segmented {
+    display: inline-flex; gap: 2px; padding: 3px;
+    background: #f2f7fb; border: 1px solid var(--border); border-radius: 11px;
+  }
+  .segmented button {
+    border: 0; background: transparent; color: var(--sub);
+    font-family: inherit; font-size: 12px; padding: 6px 12px;
+    border-radius: 8px; cursor: pointer; white-space: nowrap; transition: .15s;
+  }
+  .segmented button:hover { color: var(--accent); }
+  .segmented button.active {
+    background: #fff; color: var(--accent); font-weight: 600;
+    box-shadow: 0 1px 3px rgba(16,24,40,.08);
+  }
+  .chart { width: 100%; height: 300px; }
+  .chart svg { display: block; width: 100%; height: 100%; }
+  .legend { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-top: 6px; color: var(--sub); font-size: 11.5px; }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .legend i { width: 18px; height: 3px; border-radius: 3px; display: inline-block; }
+
+  .empty {
+    min-height: 170px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 9px;
+    color: var(--muted); font-size: 12px; text-align: center;
+  }
+  .empty .empty-icon {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: #f1f6fa; color: #b4c2d0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .empty .empty-icon svg { width: 18px; height: 18px; }
+
+  footer {
+    margin-top: 18px; padding: 4px 0 8px;
+    color: var(--muted); font-size: 11.5px; line-height: 1.9; text-align: center;
+  }
+  footer code {
+    background: #edf4f9; color: #5d7185; border-radius: 5px;
+    padding: 2px 5px; font-family: Consolas, monospace; font-size: 11px;
+  }
+
+  @media (max-width: 1080px) {
+    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 960px) {
+    .grid { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 620px) {
+    .wrap { width: calc(100% - 24px); padding-top: 18px; }
+    .cards { grid-template-columns: minmax(0, 1fr); gap: 11px; }
+    .card { padding: 15px 16px; }
+    .panel { padding: 15px; }
+    .vrow { grid-template-columns: 82px minmax(0, 1fr) 80px; gap: 8px; }
+    .chart { height: 240px; }
+    .statusbar { width: 100%; }
+    .status-pill { height: 31px; }
+    .btn { height: 31px; }
+    .trend-head { align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">火</div>
+      <div>
+        <h1>火影OL 数据面板</h1>
+        <div class="subtitle">在线人数 · 版本分布 · 10 分钟快照</div>
+      </div>
+    </div>
+    <div class="statusbar">
+      <span class="status-pill"><i class="dot" id="liveDot"></i><span id="liveText">连接中…</span></span>
+      <span class="status-pill"><span id="portText">:10001</span></span>
+      <span class="status-pill" id="updatedText">等待数据</span>
+      <button class="btn" id="refreshBtn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+        刷新
+      </button>
+    </div>
+  </header>
+
+  <div class="warn" id="warnBar"></div>
+
+  <section class="cards">
+    <article class="card hero">
+      <div class="card-label">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+        当前在线客户端
+      </div>
+      <div class="card-value"><span id="clientsVal">0</span><small>个</small></div>
+      <div class="card-foot">10 分钟活跃 <b id="activeVal">0</b> 个</div>
+    </article>
+
+    <article class="card fire">
+      <div class="card-label">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2s5 4.5 5 10a5 5 0 0 1-10 0c0-2.2 1-4 2.5-5.5C10 8 12 6 12 2Z"/><path d="M12 22a3 3 0 0 0 3-3c0-1.7-1.2-3-3-4.5-1.8 1.5-3 2.8-3 4.5a3 3 0 0 0 3 3Z"/></svg></span>
+        火影忍者Online · 显示
+      </div>
+      <div class="card-value"><span id="fireVal">0</span><small>人</small></div>
+      <div class="card-foot">实际在线 <b id="fireActual">0</b> 人</div>
+    </article>
+
+    <article class="card mini">
+      <div class="card-label">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="4"/><path d="M7 12h2"/><path d="M8 11v2"/><circle cx="16" cy="12" r="1"/><circle cx="18.5" cy="14.5" r="1"/></svg></span>
+        4399小游戏 · 显示
+      </div>
+      <div class="card-value"><span id="miniVal">0</span><small>人</small></div>
+      <div class="card-foot">实际在线 <b id="miniActual">0</b> 人</div>
+    </article>
+
+    <article class="card versions">
+      <div class="card-label">
+        <span class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg></span>
+        启动器版本
+      </div>
+      <div class="card-value"><span id="versionCount">0</span><small>个</small></div>
+      <div class="card-foot">最高版本 <b id="topVersion">-</b></div>
+    </article>
+  </section>
+
+  <section class="grid">
+    <div class="stack">
+      <div class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">版本分布<span class="panel-sub">当前在线 / 10 分钟活跃</span></h2>
+          <span class="badge">按客户端数统计</span>
+        </div>
+        <div class="vlist" id="versionBars">
+          <div class="empty">
+            <span class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h10M4 17h7"/></svg></span>
+            暂无在线客户端
+          </div>
+        </div>
+      </div>
+
+      <div class="panel note-panel">
+        <div class="panel-head" style="margin-bottom:12px">
+          <h2 class="panel-title">统计说明</h2>
+        </div>
+        <ul class="note-list">
+          <li><span class="note-dot"></span><div><b>当前在线</b><p>按客户端去重；启动器每 5 秒上报，20 秒无上报自动剔除。</p></div></li>
+          <li><span class="note-dot blue"></span><div><b>10 分钟活跃</b><p>当前统计周期内出现过的唯一客户端，中途离线也算活跃。</p></div></li>
+          <li><span class="note-dot violet"></span><div><b>版本分布</b><p>2.1.0 起上报版本号；2.0.0 及更早显示「旧版/未知」。</p></div></li>
+          <li><span class="note-dot orange"></span><div><b>数据存储</b><p>每 10 分钟落盘；当前 3 个月常驻，更早月份归档，点「全部历史」按需读取。</p></div></li>
+        </ul>
+        <div class="note-foot">数据目录 <code>%APPDATA%\hyol-online-server\stats\</code></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2 class="panel-title">最近快照<span class="panel-sub" id="historyCountText"></span></h2>
+        <span class="badge">每 10 分钟</span>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th class="num" style="text-align:right">活跃</th>
+              <th class="num" style="text-align:right">在线</th>
+              <th class="num" style="text-align:right">火影</th>
+              <th class="num" style="text-align:right">4399</th>
+              <th>主要版本</th>
+            </tr>
+          </thead>
+          <tbody id="snapBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel trend">
+    <div class="trend-head">
+      <h2 class="panel-title">10 分钟趋势<span class="panel-sub">默认当前 3 个月，全部历史按需读取</span></h2>
+      <div class="segmented" id="rangeGroup">
+        <button class="active" type="button" data-hours="24">24 小时</button>
+        <button type="button" data-hours="168">7 天</button>
+        <button type="button" data-hours="720">30 天</button>
+        <button type="button" data-scope="all">全部历史</button>
+      </div>
+    </div>
+    <div class="chart" id="chart">
+      <div class="empty">
+        <span class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 4-4 3 2 5-6"/></svg></span>
+        暂无快照数据，等待下一个 10 分钟统计点
+      </div>
+    </div>
+    <div class="legend">
+      <span><i style="background:#14b8a6"></i>10 分钟活跃客户端</span>
+      <span><i style="background:#3b82f6"></i>快照时在线客户端</span>
+    </div>
+  </section>
+
+  <footer>
+    默认加载当前月 + 前两个月；更早数据按月归档，点「全部历史」时才读取<br>
+    数据目录 <code>%APPDATA%\hyol-online-server\stats\</code> · 页面每 10 秒自动刷新<br>
+    远程访问：把地址中的 127.0.0.1 换成服务器公网 IP
+  </footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var state = { hours: 24, scope: 'active', overview: null, history: [] };
+  var $ = function (id) { return document.getElementById(id); };
+
+  function fetchJson(url) {
+    return fetch(url, { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  }
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function fmtTime(ts, withDate) {
+    var d = new Date(Number(ts) || 0);
+    if (!isFinite(d.getTime())) return '-';
+    var hm = pad(d.getHours()) + ':' + pad(d.getMinutes());
+    return withDate ? (pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + hm) : hm;
+  }
+  function fmtDay(ts) {
+    var d = new Date(Number(ts) || 0);
+    if (!isFinite(d.getTime())) return '-';
+    return pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+  function fmtMonth(ts) {
+    var d = new Date(Number(ts) || 0);
+    if (!isFinite(d.getTime())) return '-';
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1);
+  }
+  function setText(id, v) { var el = $(id); if (el) el.textContent = String(v); }
+
+  function sortVersions(map) {
+    return Object.keys(map || {}).map(function (v) {
+      return { version: v, count: Number(map[v]) || 0 };
+    }).sort(function (a, b) {
+      if (a.version === 'unknown') return 1;
+      if (b.version === 'unknown') return -1;
+      return b.version.localeCompare(a.version, undefined, { numeric: true });
+    });
+  }
+  function versionLabel(v) { return v === 'unknown' ? '旧版/未知' : v; }
+  function topVersion(map) {
+    var list = sortVersions(map);
+    return list.length ? versionLabel(list[0].version) : '-';
+  }
+
+  function renderOverview(o) {
+    state.overview = o;
+    var dot = $('liveDot');
+    dot.className = 'dot ' + (o.running ? 'on' : 'off');
+    setText('liveText', o.running ? '运行中' : (o.error ? '未运行' : '连接中…'));
+    setText('portText', ':' + o.port);
+    setText('updatedText', '更新于 ' + fmtTime(o.now));
+
+    var warn = $('warnBar');
+    if (o.warning) { warn.textContent = o.warning; warn.classList.add('show'); }
+    else { warn.textContent = ''; warn.classList.remove('show'); }
+
+    setText('clientsVal', o.clients);
+    setText('activeVal', (o.active10m && o.active10m.clients) || 0);
+    setText('fireVal', o.fire.display);
+    setText('fireActual', o.fire.actual);
+    setText('miniVal', o.mini.display);
+    setText('miniActual', o.mini.actual);
+
+    var vlist = sortVersions(o.versions);
+    setText('versionCount', vlist.length);
+    setText('topVersion', topVersion(o.versions));
+    setText('historyCountText', '当前 3 个月 ' + (o.historyCount || 0) + ' 条');
+
+    renderVersions(o);
+    renderSnapshots(o.recent || []);
+  }
+
+  function emptyHtml(text) {
+    return '<div class="empty"><span class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h10M4 17h7"/></svg></span>' + text + '</div>';
+  }
+
+  function renderVersions(o) {
+    var box = $('versionBars');
+    var list = sortVersions(o.versions);
+    var activeMap = (o.active10m && o.active10m.versions) || {};
+    if (!list.length) { box.innerHTML = emptyHtml('暂无在线客户端'); return; }
+
+    var total = list.reduce(function (s, x) { return s + x.count; }, 0) || 1;
+    var max = list.reduce(function (m, x) { return Math.max(m, x.count); }, 1);
+    box.innerHTML = '';
+
+    list.forEach(function (x) {
+      var row = document.createElement('div');
+      row.className = 'vrow';
+
+      var name = document.createElement('div');
+      name.className = 'vname';
+      name.textContent = versionLabel(x.version);
+      name.title = versionLabel(x.version);
+
+      var bar = document.createElement('div');
+      bar.className = 'vbar';
+      var fill = document.createElement('i');
+      fill.style.width = Math.max(3, Math.round(x.count / max * 100)) + '%';
+      bar.appendChild(fill);
+
+      var meta = document.createElement('div');
+      meta.className = 'vmeta';
+      meta.innerHTML = '<b>' + x.count + '</b> 个 · ' + Math.round(x.count / total * 100) + '%' +
+        '<br><span class="active">10m ' + (Number(activeMap[x.version]) || 0) + '</span>';
+
+      name.title = versionLabel(x.version);
+      row.title = versionLabel(x.version) + '：当前在线 ' + x.count + ' 个，10 分钟活跃 ' + (Number(activeMap[x.version]) || 0) + ' 个';
+      row.appendChild(name); row.appendChild(bar); row.appendChild(meta);
+      box.appendChild(row);
+    });
+  }
+
+  function renderSnapshots(recent) {
+    var body = $('snapBody');
+    body.innerHTML = '';
+    if (!recent.length) {
+      body.innerHTML = '<tr><td colspan="6"><div class="empty"><span class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 8v5l3 2"/><circle cx="12" cy="12" r="9"/></svg></span>暂无快照，等待第一个 10 分钟统计点</div></td></tr>';
+      return;
+    }
+    recent.slice().reverse().slice(0, 10).forEach(function (r) {
+      var tr = document.createElement('tr');
+      var ver = topVersion(r.uniqueVersions || r.versions || {});
+      var cells = [
+        { text: fmtTime(r.ts, true), cls: '' },
+        { text: String(r.uniqueClients == null ? '-' : r.uniqueClients), cls: 'num' },
+        { text: String(r.clients == null ? '-' : r.clients), cls: 'num' },
+        { text: r.fire ? (r.fire.display + '/' + r.fire.actual) : '-', cls: 'num' },
+        { text: r.mini ? (r.mini.display + '/' + r.mini.actual) : '-', cls: 'num' },
+        { text: ver, cls: 'ver-cell' }
+      ];
+      cells.forEach(function (c) {
+        var td = document.createElement('td');
+        td.textContent = c.text;
+        if (c.cls) td.className = c.cls;
+        if (c.cls === 'ver-cell') {
+          var span = document.createElement('span');
+          span.className = 'ver';
+          span.textContent = c.text;
+          span.title = c.text;
+          td.textContent = '';
+          td.appendChild(span);
+        }
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+  }
+
+  function renderChart(points) {
+    var box = $('chart');
+    if (!points || !points.length) {
+      box.innerHTML = '<div class="empty"><span class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 4-4 3 2 5-6"/></svg></span>暂无快照数据，等待下一个 10 分钟统计点</div>';
+      return;
+    }
+
+    var w = Math.max(320, box.clientWidth || 900);
+    var h = box.clientHeight || 300;
+    var padL = 46, padR = 18, padT = 16, padB = 34;
+    var innerW = w - padL - padR;
+    var innerH = h - padT - padB;
+
+    var maxV = 1;
+    points.forEach(function (p) {
+      maxV = Math.max(maxV, Number(p.uniqueClients) || 0, Number(p.clients) || 0);
+    });
+    var yMax = Math.ceil(maxV / 5) * 5 || 5;
+
+    function X(i) { return padL + (points.length === 1 ? innerW / 2 : (i / (points.length - 1)) * innerW); }
+    function Y(v) { return padT + innerH - (Number(v) || 0) / yMax * innerH; }
+
+    var lineU = [], lineC = [];
+    points.forEach(function (p, i) {
+      lineU.push((i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(p.uniqueClients).toFixed(1));
+      lineC.push((i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(p.clients).toFixed(1));
+    });
+
+    var grid = '';
+    for (var g = 0; g <= 4; g++) {
+      var val = Math.round(yMax * g / 4);
+      var y = Y(val);
+      grid += '<line x1="' + padL + '" y1="' + y.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + y.toFixed(1) + '" stroke="#eef3f8" stroke-width="1"/>';
+      grid += '<text x="' + (padL - 9) + '" y="' + (y + 4).toFixed(1) + '" fill="#9aa8b6" font-size="10" text-anchor="end">' + val + '</text>';
+    }
+
+    var xTicks = points.length < 2 ? 1 : (w < 520 ? 4 : 5);
+    for (var t = 0; t < xTicks; t++) {
+      var idx = points.length < 2 ? 0 : Math.round((points.length - 1) * t / (xTicks - 1));
+      var p = points[idx];
+      var label = state.scope === 'all' ? fmtMonth(p.ts) : (state.hours <= 24 ? fmtTime(p.ts) : fmtDay(p.ts));
+      var anchor = xTicks === 1 ? 'middle' : (t === 0 ? 'start' : (t === xTicks - 1 ? 'end' : 'middle'));
+      grid += '<text x="' + X(idx).toFixed(1) + '" y="' + (h - 9) + '" fill="#9aa8b6" font-size="10" text-anchor="' + anchor + '">' + label + '</text>';
+    }
+
+    var areaU = lineU.join(' ') + ' L' + X(points.length - 1).toFixed(1) + ' ' + (padT + innerH) + ' L' + X(0).toFixed(1) + ' ' + (padT + innerH) + ' Z';
+    var lastU = points[points.length - 1];
+
+    box.innerHTML =
+      '<svg viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="10分钟趋势图">' +
+        '<defs><linearGradient id="areaU" x1="0" y1="0" x2="0" y2="1">' +
+          '<stop offset="0%" stop-color="rgba(20,184,166,.18)"/>' +
+          '<stop offset="100%" stop-color="rgba(20,184,166,0)"/>' +
+        '</linearGradient></defs>' +
+        grid +
+        '<path d="' + areaU + '" fill="url(#areaU)"/>' +
+        '<path d="' + lineC.join(' ') + '" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+        '<path d="' + lineU.join(' ') + '" fill="none" stroke="#14b8a6" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>' +
+        '<circle cx="' + X(points.length - 1).toFixed(1) + '" cy="' + Y(lastU.uniqueClients).toFixed(1) + '" r="3.2" fill="#14b8a6" stroke="#fff" stroke-width="2"/>' +
+      '</svg>';
+  }
+
+  function loadOverview() {
+    return fetchJson('/api/overview').then(renderOverview).catch(function () {
+      var dot = $('liveDot');
+      dot.className = 'dot off';
+      setText('liveText', '连接失败');
+    });
+  }
+
+  function loadHistory() {
+    var url = state.scope === 'all' ? '/api/history?all=1' : '/api/history?hours=' + state.hours;
+    return fetchJson(url).then(function (data) {
+      state.history = data.points || [];
+      renderChart(state.history);
+    }).catch(function () {
+      renderChart([]);
+    });
+  }
+
+  function refreshAll() { loadOverview(); loadHistory(); }
+
+  document.querySelectorAll('#rangeGroup button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (btn.dataset.scope === 'all') {
+        state.scope = 'all';
+      } else {
+        state.scope = 'active';
+        state.hours = Number(btn.dataset.hours) || 24;
+      }
+      document.querySelectorAll('#rangeGroup button').forEach(function (b) { b.classList.toggle('active', b === btn); });
+      loadHistory();
+    });
+  });
+
+  $('refreshBtn').addEventListener('click', refreshAll);
+
+  var resizeTimer = null;
+  window.addEventListener('resize', function () {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () { renderChart(state.history); }, 160);
+  });
+
+  refreshAll();
+  setInterval(loadOverview, 10 * 1000);
+  setInterval(function () { if (state.scope !== 'all') loadHistory(); }, 60 * 1000);
+})();
+</script>
+</body>
+</html>

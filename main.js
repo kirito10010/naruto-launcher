@@ -1,8 +1,8 @@
-const { app, BrowserWindow, BrowserView, ipcMain, screen, Tray, Menu, nativeImage, dialog, webContents } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, screen, Tray, nativeImage, dialog, webContents } = require('electron');
 const updater = require('./updater');
 const path = require('path');
 const fs = require('fs');
-const { execFile, exec, spawn } = require('child_process');
+const { execFile, exec, spawn, spawnSync } = require('child_process');
 const os = require('os');
 const capture = require('./capture');
 const online = require('./online');
@@ -108,6 +108,7 @@ const FLASH_DEFAULT_CHOICE = 'system';   // system = 内置国内版 34.0.0.376�
 const SETTINGS_RESET_ID = '1.14.0';
 const DEFAULT_SETTINGS = {
   theme: 'mint',
+  tabDisplayMode: 'sidebar',
   lastSpeed: 1,
   diskCache: true,
   flashChoice: FLASH_DEFAULT_CHOICE,
@@ -117,9 +118,12 @@ const DEFAULT_SETTINGS = {
   forceGpu: true,
   softwareRender: false,
   perfDiag: false,
+  highPriority: true,
   flashQuality: 'high',
+  renderSize: '1920x1080',
   gameEntry: 'qqgame',
   fitLargeScreen: true,
+  uiScale: 0,
   settingsResetId: SETTINGS_RESET_ID
 };
 
@@ -395,6 +399,13 @@ function attachFlashQualityPatch(wc) {
 function normalizeGameEntry(v) {
   return v === 'qqgame' ? 'qqgame' : 'official';
 }
+
+// 大屏渲染尺寸（大屏适配开启时生效）：内部按这个尺寸渲染，再等比放大铺满窗口
+const RENDER_SIZES = ['1920x1080', '1600x900', '1366x768', '1280x720'];
+function normalizeRenderSize(v) {
+  if (v === '1020x600') return '1280x720';
+  return RENDER_SIZES.indexOf(v) >= 0 ? v : '1920x1080';
+}
 const CAPTURE_MODE =
   process.argv.includes('--capture-full') ? 'full' :
   process.argv.includes('--capture-miao') ? 'miao' :
@@ -419,62 +430,383 @@ let speedctlPath = '';
 let speedhookPath = '';
 let currentSpeedRate = 1;
 let injectedPids = new Set();
-let useNativeInjectionSuccess = false;
-let isWindows11 = false;
-let hvciStatus = 'unknown';
+// 游戏页面（webview guest / BrowserView）的 webContents，切倍率时按需补注
+const gameContents = new Set();
 
 let currentTheme = 'mint';
 let isAudioMuted = false;
 
 let config = Object.assign({}, DEFAULT_SETTINGS);
 
-const ACCOUNTS_FILE = path.join(app.getPath('userData'), 'accounts.json');
-let accounts = [];
-
-function loadAccounts() {
+// 游戏优先：把本应用的 Browser / 渲染 / GPU / Flash 插件进程设为高优先级。
+// 只用到 HIGH（非 Realtime），避免抢占系统输入、音频导致假死。
+function applyProcessPriority() {
+  if (process.platform !== 'win32' || typeof os.setPriority !== 'function') return;
+  const priority = (config.highPriority !== false)
+    ? (os.constants.priority && os.constants.priority.PRIORITY_HIGH) || -14
+    : (os.constants.priority && os.constants.priority.PRIORITY_NORMAL) || 0;
+  const pids = new Set();
+  try { pids.add(process.pid); } catch (e) {}
   try {
+    app.getAppMetrics().forEach((m) => { if (m && m.pid) pids.add(m.pid); });
+  } catch (e) { /* ignore */ }
+  for (const pid of pids) {
+    try { os.setPriority(pid, priority); } catch (e) { /* 进程可能已退出/无权限 */ }
+  }
+}
+
+const ACCOUNTS_FILE = path.join(app.getPath('userData'), 'accounts.json');
+const ACCOUNTS_ENC_FILE = path.join(app.getPath('userData'), 'accounts.dat');
+const ACCOUNTS_MAGIC = 'HYOL-ACC-1:';
+let accounts = [];
+let accountsLoaded = false;
+// 解密失败时锁住写入：避免用空列表覆盖掉原文件（可能只是系统组件临时不可用）
+let accountsStorageLocked = false;
+let accountStorageErrorShown = false;
+// 异步保存：合并连续写入，避免每次登录抓取都同步阻塞主进程
+let accountSaveTimer = null;
+let accountSaveRunning = false;
+let accountSavePending = null;
+
+// ========== 账号加密存储（Windows DPAPI） ==========
+// Electron 11 没有 safeStorage，且项目不允许引入原生模块，
+// 这里用系统自带 DPAPI（CurrentUser 作用域）通过 PowerShell 加解密。
+// 注意：stdin/stdout 一律按原始字节读写。PowerShell 的 [Console]::In/Out
+// 会按系统控制台代码页（中文 Windows 是 GBK）处理，中文会被写坏。
+const DPAPI_ENC_PS = [
+  'Add-Type -AssemblyName System.Security',
+  '$stdin = [Console]::OpenStandardInput()',
+  '$ms = New-Object System.IO.MemoryStream',
+  '$stdin.CopyTo($ms)',
+  '$e = [Security.Cryptography.ProtectedData]::Protect($ms.ToArray(), $null, \'CurrentUser\')',
+  '$out = [Console]::OpenStandardOutput()',
+  '$bytes = [Text.Encoding]::ASCII.GetBytes([Convert]::ToBase64String($e))',
+  '$out.Write($bytes, 0, $bytes.Length)',
+  '$out.Flush()'
+].join('; ');
+
+const DPAPI_DEC_PS = [
+  'Add-Type -AssemblyName System.Security',
+  '$stdin = [Console]::OpenStandardInput()',
+  '$ms = New-Object System.IO.MemoryStream',
+  '$stdin.CopyTo($ms)',
+  '$s = [Text.Encoding]::ASCII.GetString($ms.ToArray()).Trim()',
+  '$e = [Convert]::FromBase64String($s)',
+  '$b = [Security.Cryptography.ProtectedData]::Unprotect($e, $null, \'CurrentUser\')',
+  '$out = [Console]::OpenStandardOutput()',
+  '$out.Write($b, 0, $b.Length)',
+  '$out.Flush()'
+].join('; ');
+
+function dpapiRun(script, input) {
+  if (process.platform !== 'win32') throw new Error('DPAPI 仅支持 Windows');
+  const r = spawnSync('powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    { input, encoding: null, windowsHide: true, timeout: 20000, maxBuffer: 16 * 1024 * 1024 });
+  if (r.error) throw r.error;
+  if (r.status !== 0) {
+    const errText = r.stderr ? r.stderr.toString('utf8').trim() : '';
+    throw new Error(errText || ('powershell 退出码 ' + r.status));
+  }
+  return r.stdout ? r.stdout.toString('utf8') : '';
+}
+
+function dpapiProtect(text) {
+  return dpapiRun(DPAPI_ENC_PS, text);
+}
+
+function dpapiUnprotect(base64) {
+  return dpapiRun(DPAPI_DEC_PS, base64);
+}
+
+// 异步加密：账号保存不再阻塞主进程（同步跑 PowerShell 约 0.3~0.6 秒）
+function dpapiProtectAsync(text) {
+  return new Promise((resolve, reject) => {
+    if (process.platform !== 'win32') { reject(new Error('DPAPI 仅支持 Windows')); return; }
+    const child = spawn('powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', DPAPI_ENC_PS],
+      { windowsHide: true });
+    const out = [];
+    const err = [];
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { child.kill(); } catch (e) { /* ignore */ }
+      reject(new Error('DPAPI 加密超时'));
+    }, 20000);
+    child.stdout.on('data', (d) => out.push(d));
+    child.stderr.on('data', (d) => err.push(d));
+    child.on('error', (e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(Buffer.concat(err).toString('utf8').trim() || ('powershell 退出码 ' + code)));
+        return;
+      }
+      resolve(Buffer.concat(out).toString('utf8'));
+    });
+    child.stdin.on('error', () => { /* ignore */ });
+    child.stdin.end(Buffer.from(text, 'utf8'));
+  });
+}
+
+function showAccountStorageErrorOnce(err) {
+  if (accountStorageErrorShown) return;
+  accountStorageErrorShown = true;
+  try {
+    dialog.showErrorBox('账号加密保存失败',
+      '无法使用 Windows DPAPI 加密账号文件，已退回明文保存（安全性降低）。\n' +
+      '请检查安全软件是否拦截了 PowerShell。\n\n' +
+      (err && err.message ? err.message : String(err)));
+  } catch (e) { /* ignore */ }
+}
+
+function readEncryptedAccounts() {
+  const raw = fs.readFileSync(ACCOUNTS_ENC_FILE, 'utf8');
+  if (raw.indexOf(ACCOUNTS_MAGIC) !== 0) throw new Error('账号文件格式不正确');
+  const list = JSON.parse(dpapiUnprotect(raw.slice(ACCOUNTS_MAGIC.length)));
+  if (!Array.isArray(list)) throw new Error('账号文件内容不是数组');
+  return list;
+}
+
+function writeEncryptedRaw(base64) {
+  const data = ACCOUNTS_MAGIC + base64;
+  const tmp = ACCOUNTS_ENC_FILE + '.tmp';
+  fs.writeFileSync(tmp, data, 'utf8');
+  fs.renameSync(tmp, ACCOUNTS_ENC_FILE);
+}
+
+function writeEncryptedAccounts() {
+  writeEncryptedRaw(dpapiProtect(JSON.stringify(accounts, null, 2)));
+}
+
+function removePlaintextAccounts() {
+  [ACCOUNTS_FILE, ACCOUNTS_FILE + '.bak'].forEach((file) => {
+    try {
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+        log('已删除明文账号文件: ' + path.basename(file));
+      }
+    } catch (e) {
+      log('删除明文账号文件失败: ' + e.message, 'WARN');
+    }
+  });
+}
+
+function loadAccounts(force) {
+  if (accountsLoaded && !force) return;
+  accountsLoaded = false;
+  // 强制重读时复位保护状态：用户可能已经删掉损坏的 accounts.dat
+  accountsStorageLocked = false;
+  try {
+    if (fs.existsSync(ACCOUNTS_ENC_FILE)) {
+      try {
+        accounts = readEncryptedAccounts();
+        accountsLoaded = true;
+        migrateAccountsByZone();
+        // 加密文件已经可用，顺手清掉历史遗留的明文文件
+        removePlaintextAccounts();
+        log(`账号已加载: ${accounts.length} 个（加密文件）`);
+        return;
+      } catch (e) {
+        log('解密账号文件失败: ' + e.message, 'ERROR');
+        accountsStorageLocked = true;
+        accounts = [];
+        // 保留原文件，另存一份现场用于排查，绝不覆盖
+        try { fs.copyFileSync(ACCOUNTS_ENC_FILE, ACCOUNTS_ENC_FILE + '.corrupt'); } catch (_) { /* ignore */ }
+        try {
+          dialog.showErrorBox('账号文件无法解密',
+            '账号文件无法解密，可能是系统组件暂时不可用，或文件来自其他电脑 / 其他 Windows 账号。\n\n' +
+            '为避免覆盖数据，本次启动不会写入账号文件。\n' +
+            '如需重新开始，可先备份后删除 accounts.dat。\n\n' + e.message);
+        } catch (_) { /* ignore */ }
+      }
+    }
+
     if (fs.existsSync(ACCOUNTS_FILE)) {
       const data = fs.readFileSync(ACCOUNTS_FILE, 'utf8');
       accounts = JSON.parse(data);
-      migrateAccountZones();
-      log(`账号已加载: ${accounts.length} 个`);
-    } else {
-      log('账号文件不存在，使用空列表');
+      migrateAccountsByZone();
+      accountsLoaded = true;
+      // 加密迁移失败不能把已解析出来的账号丢掉：继续用明文文件跑，只提示一次
+      try {
+        writeEncryptedAccounts();
+        const verify = readEncryptedAccounts();
+        if (JSON.stringify(verify) !== JSON.stringify(accounts)) {
+          throw new Error('加密文件回读校验不一致');
+        }
+        removePlaintextAccounts();
+        log(`账号已迁移到加密存储: ${accounts.length} 个`);
+      } catch (e) {
+        log('迁移到加密存储失败，继续使用明文账号文件: ' + e.message, 'ERROR');
+        showAccountStorageErrorOnce(e);
+      }
+      return;
     }
+
+    if (!accounts.length) log('账号文件不存在，使用空列表');
+    accountsLoaded = true;
   } catch (e) {
     log('加载账号失败: ' + e.message, 'WARN');
     accounts = [];
   }
 }
 
-function migrateAccountZones() {
+// 账号按「QQ + 区服」拆分保存：
+// 老数据里一个 QQ 的多个区在 credentials 映射里，这里拆成多条账号，
+// 每条只保留一个 credential。拆分后没有 credentials，重复启动不会再次拆分。
+function migrateAccountsByZone() {
   let changed = false;
+  const before = accounts.length;
+  const seenIds = Object.create(null);
+  const nextId = (base, zoneKey, primary) => {
+    let id = primary ? String(base || '') : (String(base || '') + '-z-' + String(zoneKey || 'default'));
+    if (!id) id = 'account-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+    let unique = id;
+    let n = 2;
+    while (seenIds[unique]) { unique = id + '-' + n; n++; }
+    seenIds[unique] = true;
+    return unique;
+  };
+
+  const out = [];
   for (const a of accounts) {
-    if (!a || !a.qq) continue;
-    if (!a.credentials || typeof a.credentials !== 'object' || Array.isArray(a.credentials)) {
-      a.credentials = {};
-      changed = true;
+    if (!a || !a.qq) { if (a) { if (a.id) seenIds[String(a.id)] = true; out.push(a); } continue; }
+    const map = (a.credentials && typeof a.credentials === 'object' && !Array.isArray(a.credentials))
+      ? a.credentials : null;
+    const byZone = Object.create(null);
+    if (map) {
+      Object.keys(map).forEach((k) => {
+        const c = map[k];
+        if (!c || !(c.login_url || c.zone_id || c.zone_name)) return;
+        const zk = String(c.zone_id || k || 'default');
+        const old = byZone[zk];
+        // 同区同时有“已清空占位”和真实凭证时，优先保留真实凭证
+        if (!old || (!old.login_url && c.login_url)) byZone[zk] = c;
+      });
     }
-    const cred = a.credential;
-    if (cred) {
-      const key = cred.zone_id ? String(cred.zone_id) : 'default';
-      if (!a.credentials[key]) { a.credentials[key] = cred; changed = true; }
+    const legacy = a.credential;
+    if (legacy && (legacy.login_url || legacy.zone_id || legacy.zone_name)) {
+      const zk = String(legacy.zone_id || 'default');
+      const old = byZone[zk];
+      if (!old || (!old.login_url && legacy.login_url)) byZone[zk] = legacy;
     }
-    if (!a.lastZoneId) {
-      const keys = Object.keys(a.credentials);
-      a.lastZoneId = keys[0] || '';
-      changed = true;
+    const zones = Object.keys(byZone).map((k) => byZone[k]);
+
+    if (zones.length <= 1) {
+      const entry = Object.assign({}, a);
+      delete entry.credentials;
+      if (zones.length === 1) {
+        entry.credential = zones[0];
+        entry.lastZoneId = String(zones[0].zone_id || 'default');
+      } else {
+        delete entry.credential;
+        entry.lastZoneId = '';
+      }
+      entry.id = nextId(a.id, entry.lastZoneId || 'default', true);
+      out.push(entry);
+      if (map) changed = true;
+      continue;
     }
+
+    // 多区：原 ID 留给第一个区，其余区生成独立 ID
+    zones.forEach((cred, idx) => {
+      const zk = String(cred.zone_id || 'default');
+      const entry = Object.assign({}, a, { credential: cred, lastZoneId: zk });
+      delete entry.credentials;
+      entry.id = nextId(a.id, zk, idx === 0);
+      out.push(entry);
+    });
+    changed = true;
   }
-  if (changed) saveAccounts();
+
+  if (out.length !== accounts.length) changed = true;
+  accounts = out;
+  if (changed) {
+    try {
+      if (fs.existsSync(ACCOUNTS_ENC_FILE)) fs.copyFileSync(ACCOUNTS_ENC_FILE, ACCOUNTS_ENC_FILE + '.bak');
+    } catch (e) { /* ignore */ }
+    saveAccounts();
+    log('账号多区整理: ' + before + ' -> ' + accounts.length);
+  }
 }
 
 function saveAccounts() {
+  if (accountsStorageLocked) {
+    log('账号文件处于保护状态（解密失败），本次不写入', 'WARN');
+    return;
+  }
+  accountSavePending = JSON.stringify(accounts, null, 2);
+  if (accountSaveTimer) clearTimeout(accountSaveTimer);
+  accountSaveTimer = setTimeout(() => {
+    accountSaveTimer = null;
+    drainAccountSave();
+  }, 250);
+}
+
+function fallbackPlaintextSave() {
+  // 加密不可用时宁可降级明文，也不能让用户的账号改动凭空消失。
+  // 先把旧加密文件挪开，否则下次启动仍会优先读它，导致这次改动丢失。
+  try {
+    if (fs.existsSync(ACCOUNTS_ENC_FILE)) {
+      fs.renameSync(ACCOUNTS_ENC_FILE, ACCOUNTS_ENC_FILE + '.stale');
+    }
+  } catch (e) { /* ignore */ }
   try {
     fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2), 'utf8');
-    log(`账号已保存: ${accounts.length} 个`);
+    accountsLoaded = true;
+    log('账号已明文保存: ' + ACCOUNTS_FILE, 'WARN');
+  } catch (e2) {
+    log('明文保存账号也失败: ' + e2.message, 'ERROR');
+  }
+}
+
+function drainAccountSave() {
+  if (accountSaveRunning || accountSavePending == null) return;
+  const plain = accountSavePending;
+  accountSavePending = null;
+  accountSaveRunning = true;
+  dpapiProtectAsync(plain).then((base64) => {
+    // 退出流程会走同步落盘，异步结果直接丢弃，避免覆盖更新的数据
+    if (isQuitting) return;
+    writeEncryptedRaw(base64);
+    accountsLoaded = true;
+    log(`账号已加密保存: ${accounts.length} 个`);
+  }).catch((e) => {
+    if (isQuitting) return;
+    log('加密保存账号失败，退回明文保存: ' + e.message, 'ERROR');
+    fallbackPlaintextSave();
+    showAccountStorageErrorOnce(e);
+  }).then(() => {
+    accountSaveRunning = false;
+    if (accountSavePending != null) drainAccountSave();
+  });
+}
+
+// 退出前必须同步落盘，异步 PowerShell 可能来不及完成
+function flushAccountSaveSync() {
+  if (accountSaveTimer) {
+    clearTimeout(accountSaveTimer);
+    accountSaveTimer = null;
+  }
+  const hadPending = accountSavePending != null || accountSaveRunning;
+  accountSavePending = null;
+  if (!hadPending) return;
+  try {
+    writeEncryptedAccounts();
+    accountsLoaded = true;
+    log(`账号已加密保存（退出前）: ${accounts.length} 个`);
   } catch (e) {
-    log('保存账号失败: ' + e.message, 'WARN');
+    log('退出前加密保存失败，退回明文: ' + e.message, 'WARN');
+    fallbackPlaintextSave();
   }
 }
 
@@ -500,7 +832,7 @@ function updateAccount(accountId, qq, password, windowName) {
   if (account) {
     if (qq && String(account.qq) !== String(qq)) {
       delete account.credential;
-      account.credentials = {};
+      delete account.credentials;
       account.lastZoneId = '';
     }
     if (qq) account.qq = qq;
@@ -527,8 +859,6 @@ const CREDENTIAL_COOKIE_NAMES = [
   'skey', 'uin', 'p_uin', 'p_skey', 'pt2gguin', 'luin', 'ptui_loginuin',
   'openid', 'access_token', 'openkey', 'pf', 'pfkey'
 ];
-// cookie 没带过期时间时的兜底：7 天（失效会自动回退登录页，所以放宽是安全的）
-const CREDENTIAL_TTL_MS = 7 * 24 * 3600 * 1000;
 
 function normalizeUinValue(raw) {
   if (!raw) return 0;
@@ -580,7 +910,10 @@ function resolveAccountZoneId(account, zoneId) {
     if (!z && map.default) return 'default';
   }
   const keys = Object.keys(map);
-  return keys.length ? keys[0] : '';
+  if (keys.length) return keys[0];
+  // 拆分后的账号没有 credentials 映射，直接取单凭证的区服
+  if (account.credential) return account.credential.zone_id ? String(account.credential.zone_id) : 'default';
+  return '';
 }
 
 function pickAccountCredential(account, zoneId) {
@@ -604,10 +937,9 @@ function pickAccountForZone(account, zoneId) {
 function accountLabelForZone(account, zoneId) {
   if (!account) return '窗口';
   const base = account.windowName || account.qq;
-  const zones = getAccountZones(account);
   const cred = pickAccountCredential(account, zoneId);
   const zoneName = cred && (cred.zone_name || cred.zone_id);
-  return (zones.length > 1 && zoneName) ? (base + ' · ' + zoneName) : base;
+  return zoneName ? (base + ' · ' + zoneName) : base;
 }
 
 function broadcastAccountsChanged() {
@@ -629,25 +961,11 @@ async function captureCredentialFromGuest(guest, url) {
     const uinCookie = cookies.find((c) => ['uin', 'p_uin', 'ptui_loginuin', 'luin'].indexOf(c.name) >= 0 && c.value);
     const uin = normalizeUinValue(uinCookie && uinCookie.value);
     if (!uin) return;
-    let account = accounts.find((a) => String(a.qq || '').replace(/\D/g, '') === String(uin));
-    let autoCreated = false;
-    // 扫码、检测本机 QQ、账号密码登录最终都会进这里：列表里没有这个 QQ 就自动建一条，
-    // 凭证直接挂在账号上，用户不用再手动添加。
-    if (!account) {
-      account = {
-        id: 'account-' + Date.now(),
-        qq: String(uin),
-        qqPwd: '',
-        windowName: '',
-        autoSaved: true
-      };
-      accounts.push(account);
-      autoCreated = true;
-    }
 
-    const expiresAt = skey.expirationDate
-      ? Math.round(skey.expirationDate * 1000)
-      : Date.now() + CREDENTIAL_TTL_MS;
+    // skey 经常是会话型 cookie（没有 expirationDate），此时不编造到期时间，
+    // 只记录“已保存”，由下次进区自动续期覆盖。
+    const hasExpiry = !!skey.expirationDate;
+    const expiresAt = hasExpiry ? Math.round(skey.expirationDate * 1000) : 0;
     const keep = cookies
       .filter((c) => CREDENTIAL_COOKIE_NAMES.indexOf(c.name) >= 0 && c.value &&
         /(^|\.)(qq|huoying\.qq|ptlogin2\.qq)\.com$/i.test(c.domain || ''))
@@ -660,7 +978,28 @@ async function captureCredentialFromGuest(guest, url) {
         httpOnly: !!c.httpOnly,
         expirationDate: c.expirationDate || 0
       }));
+    // 防跨账号污染：同一个分区先后登过 A、B 时，A 的票据会残留在 cookie 里，
+    // 被当成 B 的凭证存下来。skey / p_skey 只要值属于其他账号、又不是本次抓到的 skey，就丢弃。
+    try {
+      const foreignTickets = new Set();
+      accounts.forEach((a) => {
+        if (!a || String(a.qq || '').replace(/\D/g, '') === String(uin)) return;
+        const c = a.credential;
+        if (c && c.skey) foreignTickets.add(c.skey);
+      });
+      if (foreignTickets.size) {
+        for (let i = keep.length - 1; i >= 0; i--) {
+          const c = keep[i];
+          const isTicket = c.name === 'skey' || c.name === 'p_skey';
+          if (isTicket && c.value !== skey.value && foreignTickets.has(c.value)) {
+            log('[credential] 丢弃跨账号票据: ' + c.name + '@' + c.domain, 'WARN');
+            keep.splice(i, 1);
+          }
+        }
+      }
+    } catch (e) { /* ignore */ }
     const zone = parseZoneFromUrl(url);
+    const now = new Date().toISOString();
     const credential = {
       uin: uin,
       skey: skey.value,
@@ -668,14 +1007,38 @@ async function captureCredentialFromGuest(guest, url) {
       login_url: url,
       zone_id: zone.zone_id,
       zone_name: zone.zone_name,
-      expires_at: new Date(expiresAt).toISOString(),
-      captured_at: new Date().toISOString()
+      expires_at: hasExpiry ? new Date(expiresAt).toISOString() : '',
+      expires_source: hasExpiry ? 'cookie' : 'unknown',
+      captured_at: now,
+      last_ok_at: now,
+      expired_at: ''
     };
     const zoneKey = String(zone.zone_id || 'default');
-    if (!account.credentials || typeof account.credentials !== 'object') account.credentials = {};
-    account.credentials[zoneKey] = credential;
-    account.lastZoneId = zoneKey;
+
+    // 账号按「QQ + 区服」拆分保存：同 QQ 不同区各占一条，一键启动才能全部拉起
+    const qqKey = String(uin);
+    const sameQQ = (a) => a && String(a.qq || '').replace(/\D/g, '') === qqKey;
+    let account = accounts.find((a) => sameQQ(a) && a.credential &&
+      String(a.credential.zone_id || 'default') === zoneKey);
+    let autoCreated = false;
+    if (!account) {
+      // 只复用完全空白的手动账号；已清空凭证的占位条目属于它自己的区，不能被别的区覆盖
+      account = accounts.find((a) => sameQQ(a) && !a.credential);
+    }
+    if (!account) {
+      account = {
+        id: 'account-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        qq: qqKey,
+        qqPwd: '',
+        windowName: '',
+        autoSaved: true
+      };
+      accounts.push(account);
+      autoCreated = true;
+    }
     account.credential = credential;
+    account.lastZoneId = zoneKey;
+    delete account.credentials;
     saveAccounts();
     broadcastAccountsChanged();
     log('[credential] ' + (autoCreated ? '已自动保存新账号: ' : '已保存账号凭证: ') + account.qq + ' 区服=' + (zone.zone_name || zone.zone_id || '-'));
@@ -706,35 +1069,58 @@ function attachCredentialCapture(guest) {
 ipcMain.handle('apply-credential', async (event, partition, cred) => {
   if (!partition || !cred || !cred.login_url) return false;
   const ses = require('electron').session.fromPartition(partition);
-  const expSec = cred.expires_at ? Math.round(new Date(cred.expires_at).getTime() / 1000) : Math.round((Date.now() + CREDENTIAL_TTL_MS) / 1000);
+  // 没有真实到期时间就写成会话 cookie，不再伪造 7 天
+  const expSec = cred.expires_at ? Math.round(new Date(cred.expires_at).getTime() / 1000) : 0;
   const list = Array.isArray(cred.cookies) ? cred.cookies : [];
   let written = 0;
+  let hasSkeyOnHuoying = false;
+  let hasUin = false;
+  let hasPt2gguin = false;
   for (const c of list) {
     if (!c || !c.name || !c.value) continue;
     const domain = c.domain || '.huoying.qq.com';
     const url = /(^|\.)ptlogin2\.qq\.com$/i.test(domain) ? 'https://xui.ptlogin2.qq.com/' : 'https://game.huoying.qq.com/';
+    const cookie = {
+      url: url,
+      name: c.name,
+      value: c.value,
+      domain: domain,
+      path: c.path || '/',
+      secure: !!c.secure,
+      httpOnly: !!c.httpOnly
+    };
+    const exp = c.expirationDate || expSec;
+    if (exp) cookie.expirationDate = exp;
     try {
-      await ses.cookies.set({
-        url: url,
-        name: c.name,
-        value: c.value,
-        domain: domain,
-        path: c.path || '/',
-        secure: !!c.secure,
-        httpOnly: !!c.httpOnly,
-        expirationDate: c.expirationDate || expSec
-      });
+      await ses.cookies.set(cookie);
       written++;
+      if (c.name === 'skey' && /(^|\.)huoying\.qq\.com$/i.test(domain)) hasSkeyOnHuoying = true;
+      if (c.name === 'uin' && /(^|\.)huoying\.qq\.com$/i.test(domain)) hasUin = true;
+      if (c.name === 'pt2gguin' && /(^|\.)ptlogin2\.qq\.com$/i.test(domain)) hasPt2gguin = true;
     } catch (e) { /* ignore */ }
   }
-  if (!written && cred.skey) {
+
+  // 兜底：无论 cookie 列表是否完整，都保证游戏域名上有 skey / uin；
+  // 再补 pt2gguin（充值页走 xui.ptlogin2.qq.com，缺它会被要求重新登录）。
+  const setCookie = async (url, domain, name, value) => {
+    const cookie = { url: url, name: name, value: value, domain: domain, path: '/', secure: false, httpOnly: false };
+    if (expSec) cookie.expirationDate = expSec;
     try {
-      await ses.cookies.set({ url: 'https://game.huoying.qq.com/', name: 'skey', value: cred.skey, domain: '.huoying.qq.com', path: '/', secure: false, httpOnly: false, expirationDate: expSec });
-      if (cred.uin) {
-        await ses.cookies.set({ url: 'https://game.huoying.qq.com/', name: 'uin', value: 'o0' + String(cred.uin).padStart(10, '0'), domain: '.huoying.qq.com', path: '/', secure: false, httpOnly: false, expirationDate: expSec });
-      }
-      written = 1;
-    } catch (e) { /* ignore */ }
+      await ses.cookies.set(cookie);
+      written++;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+  if (cred.skey && !hasSkeyOnHuoying) {
+    await setCookie('https://game.huoying.qq.com/', '.huoying.qq.com', 'skey', cred.skey);
+  }
+  if (cred.uin && !hasUin) {
+    await setCookie('https://game.huoying.qq.com/', '.huoying.qq.com', 'uin', 'o0' + String(cred.uin).padStart(10, '0'));
+  }
+  if (cred.uin && !hasPt2gguin) {
+    await setCookie('https://xui.ptlogin2.qq.com/', '.ptlogin2.qq.com', 'pt2gguin', 'o' + String(cred.uin).padStart(10, '0'));
   }
   log('[credential] 注入 cookie: ' + written + ' 条 → ' + partition);
   return written > 0;
@@ -743,36 +1129,23 @@ ipcMain.handle('apply-credential', async (event, partition, cred) => {
 ipcMain.handle('clear-credential', (event, accountId, zoneId) => {
   const account = accounts.find((a) => a.id === accountId);
   if (!account) return false;
-  if (!account.credentials || typeof account.credentials !== 'object') account.credentials = {};
-  if (zoneId) {
-    const key = String(zoneId);
-    const old = account.credentials[key] || {};
-    account.credentials[key] = {
-      zone_id: old.zone_id || key,
-      zone_name: old.zone_name || '',
-      login_url: '',
-      skey: '',
-      cookies: [],
-      expires_at: '',
-      captured_at: ''
-    };
-    if (account.credential && String(account.credential.zone_id || 'default') === key) {
-      const keys = Object.keys(account.credentials).filter(k => account.credentials[k] && account.credentials[k].login_url);
-      if (keys.length) account.credential = account.credentials[keys[0]];
-      else delete account.credential;
-    }
-    if (!account.lastZoneId) {
-      const keys = Object.keys(account.credentials);
-      account.lastZoneId = keys[0] || '';
-    }
-  } else {
-    account.credentials = {};
-    delete account.credential;
-    account.lastZoneId = '';
-  }
+  const old = account.credential || {};
+  const key = String(zoneId || old.zone_id || 'default');
+  // 账号已按区拆分，清除只作用于当前这一条；保留区服占位，卡片不消失
+  account.credential = {
+    zone_id: old.zone_id || key,
+    zone_name: old.zone_name || '',
+    login_url: '',
+    skey: '',
+    cookies: [],
+    expires_at: '',
+    captured_at: ''
+  };
+  account.lastZoneId = key;
+  delete account.credentials;
   saveAccounts();
   broadcastAccountsChanged();
-  log('[credential] 已清除账号凭证: ' + account.qq + (zoneId ? ' 区服=' + zoneId : ' (全部)'));
+  log('[credential] 已清除账号凭证: ' + account.qq + ' 区服=' + key);
   return true;
 });
 
@@ -780,11 +1153,28 @@ ipcMain.on('set-account-zone', (event, accountId, zoneId) => {
   const account = accounts.find((a) => a.id === accountId);
   if (!account) return;
   const key = String(zoneId || '');
-  if (!account.credentials || !account.credentials[key]) return;
-  account.lastZoneId = key;
+  if (!key) return;
+  // 拆分后的账号只有自己这一区，切区不再改凭证，只记录当前区
+  if (account.credential && String(account.credential.zone_id || 'default') === key) {
+    account.lastZoneId = key;
+    saveAccounts();
+    broadcastAccountsChanged();
+    log('[credential] 账号 ' + account.qq + ' 当前区服: ' + key);
+  }
+});
+
+// 凭证被判定失效：保留 login_url / cookie / 区服，只打标记，重新登录后抓取会自动清掉
+ipcMain.handle('mark-credential-expired', (event, accountId, zoneId) => {
+  const account = accounts.find((a) => a.id === accountId);
+  if (!account || !account.credential || !account.credential.login_url) return false;
+  const key = String(zoneId || account.credential.zone_id || 'default');
+  if (String(account.credential.zone_id || 'default') !== key) return false;
+  if (account.credential.expired_at) return true;
+  account.credential.expired_at = new Date().toISOString();
   saveAccounts();
   broadcastAccountsChanged();
-  log('[credential] 账号 ' + account.qq + ' 当前区服: ' + key);
+  log('[credential] 标记失效: ' + account.qq + ' 区服=' + key);
+  return true;
 });
 
 function injectQuickLogin(webContents, qqNumber, password) {
@@ -898,7 +1288,7 @@ function setupAutoLogin(tabInfo) {
   });
 }
 
-// 1.14.0 一次性重置：把旧配置改写成默认值（保留 clientId，账号/凭证在 accounts.json）
+// 1.14.0 一次性重置：把旧配置改写成默认值（保留 clientId，账号/凭证在加密的 accounts.dat）
 function resetSettingsIfNeeded() {
   try {
     if (!fs.existsSync(CONFIG_FILE)) return;
@@ -923,6 +1313,11 @@ function loadConfig() {
       currentSpeedRate = config.lastSpeed || 1;
       if (config.diskCache === undefined) config.diskCache = true;
       if (config.flashChoice === undefined) config.flashChoice = FLASH_DEFAULT_CHOICE;
+      if (config.renderSize === undefined) config.renderSize = '1920x1080';
+      else config.renderSize = normalizeRenderSize(config.renderSize);
+      if (config.tabDisplayMode !== 'taskbar') config.tabDisplayMode = 'sidebar';
+      const uiScale = Number(config.uiScale);
+      config.uiScale = (uiScale >= 1 && uiScale <= 2) ? uiScale : 0;
       // 1.12.1 一次性迁移：所有用户（包括手动选过国内版 34 的）统一重置为国际版 32
       if (config.flashMigrated !== FLASH_MIGRATION_ID) {
         config.flashChoice = FLASH_DEFAULT_CHOICE;
@@ -1089,7 +1484,7 @@ function matchShortcut(input) {
   const shift = !!input.shift;
 
   if (key === 'Escape') return 'escape';
-  if (key === 'F11') return 'fullscreen';
+  // F11 由 web-contents-created 里的全局监听统一处理，这里不要再返回，否则会切两次
   if (key === 'F5') return 'refresh';
   if (ctrl && !alt && k === 'r') return 'refresh';
   if (ctrl && !alt && !shift && k === 't') return 'new-tab';
@@ -1202,6 +1597,70 @@ function getThemeColors() {
     accent: t.accent,
     gradient: t.bg
   };
+}
+
+// ========== 界面缩放（启动器/账号窗口，不影响游戏渲染） ==========
+const UI_SCALE_STEPS = [1, 1.25, 1.5, 1.75, 2];
+let systemDpiCache = 0;
+
+function readSystemDpi() {
+  if (systemDpiCache) return systemDpiCache;
+  systemDpiCache = 96;
+  if (process.platform !== 'win32') return systemDpiCache;
+  try {
+    const r = spawnSync('reg', ['query', 'HKCU\\Control Panel\\Desktop\\WindowMetrics', '/v', 'AppliedDPI'],
+      { encoding: 'utf8', windowsHide: true, timeout: 3000 });
+    const m = /AppliedDPI\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(r.stdout || '');
+    if (m) systemDpiCache = parseInt(m[1], 16) || 96;
+  } catch (e) { /* ignore */ }
+  return systemDpiCache;
+}
+
+function getUiScale() {
+  const fixed = Number(config.uiScale);
+  if (fixed >= 1 && fixed <= 2) return Math.min(2, Math.max(1, fixed));
+  const d = screen.getPrimaryDisplay();
+  const width = (d.size && d.size.width) || (d.bounds && d.bounds.width) || 1920;
+  const raw = Math.max(1, readSystemDpi() / 96, width / 1920);
+  return UI_SCALE_STEPS.find((s) => s >= raw - 0.01) || 2;
+}
+
+function applyUiScaleToWindow(win, baseW, baseH) {
+  if (!win || win.isDestroyed()) return;
+  const scale = getUiScale();
+  let effective = scale;
+  try {
+    const d = screen.getDisplayMatching(win.getBounds());
+    const maxH = Math.max(1, d.workAreaSize.height - 40);
+    const maxW = Math.max(1, d.workAreaSize.width - 40);
+    effective = Math.min(scale, maxH / baseH, maxW / baseW);
+    effective = Math.max(1, Math.floor(effective * 20) / 20);
+  } catch (e) {
+    effective = scale;
+  }
+  win.__uiEffectiveScale = effective;
+  try { win.webContents.setZoomFactor(effective); } catch (e) { /* ignore */ }
+  // 导航完成后 zoomFactor 可能被重置，窗口加载完再补一次
+  if (!win.__uiZoomBound) {
+    win.__uiZoomBound = true;
+    try {
+      win.webContents.on('did-finish-load', () => {
+        if (!win.isDestroyed()) {
+          try { win.webContents.setZoomFactor(win.__uiEffectiveScale || getUiScale()); } catch (e) { /* ignore */ }
+        }
+      });
+    } catch (e) { /* ignore */ }
+  }
+  try { win.setContentSize(Math.round(baseW * effective), Math.round(baseH * effective)); } catch (e) { /* ignore */ }
+  // 放大后如果窗口跑出工作区，往回收一点
+  try {
+    const b = win.getBounds();
+    const d = screen.getDisplayMatching(b);
+    const wa = d.workArea;
+    const nx = Math.min(Math.max(b.x, wa.x), wa.x + wa.width - b.width);
+    const ny = Math.min(Math.max(b.y, wa.y), wa.y + wa.height - b.height);
+    if (nx !== b.x || ny !== b.y) win.setPosition(nx, ny);
+  } catch (e) { /* ignore */ }
 }
 
 
@@ -1629,49 +2088,10 @@ function detectWindowsVersion() {
     const release = os.release();
     const version = os.version();
     log(`系统信息: release=${release}, version=${version}`);
-    
-    if (release.startsWith('10.0')) {
-      const parts = release.split('.');
-      if (parts.length >= 3) {
-        const buildNumber = parseInt(parts[2], 10);
-        if (buildNumber >= 22000) {
-          isWindows11 = true;
-          log('检测到Windows 11系统');
-          checkHVCI();
-        } else {
-          isWindows11 = false;
-          log('检测到Windows 10系统');
-        }
-      }
-    }
-    
     return release;
   } catch (e) {
     log(`检测系统版本失败: ${e.message}`, 'WARN');
     return 'unknown';
-  }
-}
-
-function checkHVCI() {
-  exec('reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\DeviceGuard\\Scenarios\\HypervisorEnforcedCodeIntegrity" /v Enabled', (err, stdout, stderr) => {
-    if (!err && stdout.includes('0x1')) {
-      hvciStatus = 'enabled';
-      log('HVCI (内存完整性) 已启用 - 这可能阻止DLL注入', 'WARN');
-    } else {
-      hvciStatus = 'disabled';
-      log('HVCI (内存完整性) 已禁用');
-    }
-  });
-}
-
-function showHVCIWarning() {
-  if (isWindows11 && hvciStatus === 'enabled') {
-    dialog.showMessageBox({
-      type: 'warning',
-      title: 'Windows 11 加速提示',
-      message: '检测到您的Windows 11系统启用了"内存完整性"功能，这会阻止游戏加速功能。\n\n请按照以下步骤关闭：\n\n1. 打开"设置" → "更新和安全" → "Windows安全中心"\n2. 点击"设备安全性"\n3. 点击"核心隔离"\n4. 关闭"内存完整性"\n5. 重启电脑\n\n关闭后加速功能即可正常使用。',
-      buttons: ['知道了']
-    });
   }
 }
 
@@ -1705,7 +2125,6 @@ function injectSpeedHook(pid) {
   
   const child = spawn(speedctlPath, args, {
     windowsHide: true,
-    timeout: 10000,
     env: {
       ...process.env,
       PATH: process.env.PATH + ';' + path.dirname(speedctlPath)
@@ -1730,18 +2149,12 @@ function injectSpeedHook(pid) {
   
   child.on('close', (code) => {
     if (code === 0) {
-      useNativeInjectionSuccess = true;
       log(`DLL注入成功 PID ${pid}${stdoutData.trim() ? ' - ' + stdoutData.trim() : ''}`);
       if (currentSpeedRate !== 1) {
         updateNativeRate(currentSpeedRate);
       }
     } else {
-      log(`DLL注入失败 PID ${pid}, 退出码=${code}, stderr=${stderrData.trim()}`, 'ERROR');
-      
-      if (isWindows11 && code === -1073741510) {
-        log('Win11错误码 -1073741510: 可能是HVCI阻止了注入', 'ERROR');
-      }
-      
+      log(`DLL注入失败 PID ${pid}, 退出码=${code}, stderr=${stderrData.trim()}`, 'WARN');
       injectedPids.delete(pid);
     }
   });
@@ -1756,7 +2169,6 @@ function updateNativeRate(rate) {
   log(`尝试设置原生变速率为 ${rate}x`);
   const child = spawn(speedctlPath, ['rate', String(rate)], {
     windowsHide: true,
-    timeout: 5000,
     env: {
       ...process.env,
       PATH: process.env.PATH + ';' + path.dirname(speedctlPath)
@@ -1782,11 +2194,7 @@ function updateNativeRate(rate) {
     if (code === 0) {
       log(`原生变速率设置成功${stdoutData.trim() ? ' - ' + stdoutData.trim() : ''}`);
     } else {
-      log(`设置变速率失败，退出码=${code}, stderr=${stderrData.trim()}`, 'ERROR');
-      
-      if (code === -1073741510) {
-        log('错误码 -1073741510: 权限不足或HVCI阻止', 'ERROR');
-      }
+      log(`设置变速率失败，退出码=${code}, stderr=${stderrData.trim()}`, 'WARN');
     }
   });
 }
@@ -1808,7 +2216,9 @@ function setSpeedRate(rate) {
   
   if (fs.existsSync(speedctlPath)) {
     updateNativeRate(rate);
+    injectIntoGameContents();
     injectAllChildProcesses();
+    scheduleSpeedRescan();
   }
   
   log(`变速率已设置为: ${rate}x`);
@@ -1816,11 +2226,10 @@ function setSpeedRate(rate) {
 
 function getAllRelevantChildPids() {
   try {
-    // Electron 自带的进程指标，无需 spawn PowerShell 扫描
+    // 只扫描 Flash 插件进程。游戏渲染进程在各自 dom-ready 时按 PID 直注，
+    // 避免把启动器/账号窗口的渲染进程也挂上 hook。
     const metrics = app.getAppMetrics();
-    const relevantTypes = new Set([
-      'renderer', 'tab', 'plugin', 'ppapi plugin', 'pepper plugin'
-    ]);
+    const relevantTypes = new Set(['ppapi plugin', 'pepper plugin']);
     return metrics
       .filter(m => m.pid && m.pid !== process.pid)
       .filter(m => relevantTypes.has(String(m.type || '').toLowerCase()))
@@ -1831,52 +2240,66 @@ function getAllRelevantChildPids() {
   }
 }
 
-let lastInjectTime = 0;
-const INJECT_COOLDOWN = 5000;
+// 进程退出后 pid 可能被系统复用，注入记录必须及时清理
+function pruneInjectedPids() {
+  try {
+    const alive = new Set(app.getAppMetrics().map(m => m.pid));
+    injectedPids.forEach((pid) => {
+      if (!alive.has(pid)) injectedPids.delete(pid);
+    });
+  } catch (e) { /* ignore */ }
+}
+
+function trackGameContents(wc) {
+  if (!wc) return;
+  gameContents.add(wc);
+  try {
+    wc.once('destroyed', () => gameContents.delete(wc));
+  } catch (e) { /* ignore */ }
+}
+
+// 用户切倍率时，已经打开的游戏页面也要补注（dom-ready 时倍率可能还是 1x）
+function injectIntoGameContents() {
+  if (Math.abs(currentSpeedRate - 1) < 1e-6) return;
+  gameContents.forEach((wc) => {
+    try {
+      if (wc.isDestroyed()) {
+        gameContents.delete(wc);
+        return;
+      }
+      const pid = wc.getOSProcessId();
+      if (pid) injectSpeedHook(pid);
+    } catch (e) { /* ignore */ }
+  });
+}
 
 async function injectAllChildProcesses() {
-  // 1x（还原）时无需注入：hook 常驻每个渲染/插件进程也会带来额外开销。
+  pruneInjectedPids();
+  // 1x（还原）时只需清理注入记录：hook 常驻进程会带来额外开销。
   // 之后用户把倍率改成非 1 时，setSpeedRate 会重新调用本函数完成注入。
   if (Math.abs(currentSpeedRate - 1) < 1e-6) {
     return;
   }
 
-  const now = Date.now();
-  if (now - lastInjectTime < INJECT_COOLDOWN) {
-    return;
-  }
-  lastInjectTime = now;
-  
   try {
     const childPids = getAllRelevantChildPids();
-    
+
     for (const pid of childPids) {
       if (!injectedPids.has(pid)) {
         injectSpeedHook(pid);
       }
-    }
-    
-    if (isWindows11) {
-      setTimeout(secondPass, 2000);
     }
   } catch (e) {
     log('扫描子进程失败: ' + e.message, 'WARN');
   }
 }
 
-async function secondPass() {
-  try {
-    const childPids = getAllRelevantChildPids();
-    
-    for (const pid of childPids) {
-      if (!injectedPids.has(pid)) {
-        log('第二轮注入 PID=' + pid);
-        injectSpeedHook(pid);
-      }
-    }
-  } catch (e) {
-    log('第二轮注入失败: ' + e.message, 'WARN');
-  }
+// Flash 插件进程可能晚于 dom-ready / 切换倍率才创建，延迟补几次扫描
+function scheduleSpeedRescan() {
+  if (Math.abs(currentSpeedRate - 1) < 1e-6) return;
+  [3000, 8000, 15000].forEach((ms) => {
+    setTimeout(() => { injectAllChildProcesses(); }, ms);
+  });
 }
 
 const FLASH_PATH = getFlashPath();
@@ -1958,15 +2381,14 @@ if (CAPTURE_MODE !== 'off') {
 function createLauncherWindow() {
   const T = THEMES[currentTheme] || THEMES.mint;
 
-  const { screen, nativeImage } = require('electron');
-  const display = screen.getPrimaryDisplay();
-  const dpr = display.scaleFactor || 1;
+  const { nativeImage } = require('electron');
 
   const baseWidth = 360;
   const baseHeight = 640;
 
-  const scaledWidth = Math.max(baseWidth, Math.floor(baseWidth * dpr * 0.8));
-  const scaledHeight = Math.max(baseHeight, Math.floor(baseHeight * dpr * 0.8));
+  const uiScale = getUiScale();
+  const scaledWidth = Math.round(baseWidth * uiScale);
+  const scaledHeight = Math.round(baseHeight * uiScale);
 
   // 标题栏 logo（小尺寸 base64；失败则留空，页面会隐藏该 img）
   let logoDataUrl = '';
@@ -2000,6 +2422,7 @@ function createLauncherWindow() {
   });
 
   launcherWindow.setMenu(null);
+  applyUiScaleToWindow(launcherWindow, baseWidth, baseHeight);
 
   const launcherHtml = `<!DOCTYPE html>
 <html>
@@ -2332,12 +2755,40 @@ function createLauncherWindow() {
         </label>
       </div>
 
+      <div class="row">
+        <span class="row-label">性能模式<span class="row-hint">大屏适配开启时生效；1920 清晰，其余按屏幕比例降宽，越低越流畅但字越软</span></span>
+        <select class="sel" id="renderSizeSel" style="width:150px; flex:0 0 150px;" onchange="changeRenderSize(this.value)">
+          <option value="1920x1080">1920×1080 清晰</option>
+          <option value="1600x900">1600×900 平衡</option>
+          <option value="1366x768">1366×768 流畅</option>
+          <option value="1280x720">1280×720 极速</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <span class="row-label">界面缩放<span class="row-hint">启动器与账号窗口大小；自动按屏幕分辨率/系统缩放计算</span></span>
+        <select class="sel" id="uiScaleSel" style="width:110px; flex:0 0 110px;" onchange="changeUiScale(this.value)">
+          <option value="0">自动</option>
+          <option value="1">100%</option>
+          <option value="1.25">125%</option>
+          <option value="1.5">150%</option>
+          <option value="2">200%</option>
+        </select>
+      </div>
+
       <div class="sec-title">性能</div>
       <div class="row">
         <span class="row-label">强制启用 GPU<span class="row-hint">可能花屏/掉帧，切换后需重启</span></span>
         <button class="info-btn" onclick="openHelp('gpu')" title="强制启用 GPU 说明">说明</button>
         <label class="switch">
           <input type="checkbox" id="gpuChk" onchange="toggleForceGpu(this.checked)">
+          <span class="track"></span>
+        </label>
+      </div>
+      <div class="row">
+        <span class="row-label">游戏优先<span class="row-hint">启动器/游戏/Flash 进程使用高优先级（非实时）</span></span>
+        <label class="switch">
+          <input type="checkbox" id="priorityChk" onchange="toggleHighPriority(this.checked)">
           <span class="track"></span>
         </label>
       </div>
@@ -2383,10 +2834,13 @@ function createLauncherWindow() {
     function changeFlash(choice) { ipcRenderer.send('set-flash-choice', choice); }
     function changeCaptureMode(mode) { ipcRenderer.send('set-capture-mode', mode); }
     function toggleForceGpu(on) { ipcRenderer.send('set-force-gpu', on); }
+    function toggleHighPriority(on) { ipcRenderer.send('set-high-priority', on); }
     function togglePerfDiag(on) { ipcRenderer.send('set-perf-diag', on); }
     function toggleFitScreen(on) { ipcRenderer.send('set-fit-large-screen', on); }
     function changeGameEntry(v) { ipcRenderer.send('set-game-entry', v); }
     function changeFlashQuality(v) { ipcRenderer.send('set-flash-quality', v); }
+    function changeRenderSize(v) { ipcRenderer.send('set-render-size', v); }
+    function changeUiScale(v) { ipcRenderer.send('set-ui-scale', Number(v)); }
     function toggleSoftwareRender(on) { ipcRenderer.send('set-software-render', on); }
     function refreshStorageInfo() { ipcRenderer.send('get-storage-info'); }
     function clearCaptures() { ipcRenderer.send('clear-captures'); }
@@ -2599,6 +3053,10 @@ function createLauncherWindow() {
       const c = document.getElementById('gpuChk');
       if (c) c.checked = !!on;
     });
+    ipcRenderer.on('high-priority-state', function (e, on) {
+      const c = document.getElementById('priorityChk');
+      if (c) c.checked = !!on;
+    });
     ipcRenderer.on('perf-diag-state', function (e, on) {
       const c = document.getElementById('perfChk');
       if (c) c.checked = !!on;
@@ -2611,9 +3069,19 @@ function createLauncherWindow() {
       const s = document.getElementById('qualitySel');
       if (s) s.value = (v === 'low' || v === 'medium') ? v : 'high';
     });
+    ipcRenderer.on('render-size-state', function (e, v) {
+      const s = document.getElementById('renderSizeSel');
+      if (s) s.value = ['1920x1080', '1600x900', '1366x768', '1280x720'].indexOf(v) >= 0 ? v : '1920x1080';
+    });
+    ipcRenderer.on('ui-scale-state', function (e, v) {
+      const s = document.getElementById('uiScaleSel');
+      if (s) s.value = String(v || 0);
+    });
     ipcRenderer.on('fit-large-screen-state', function (e, on) {
       const c = document.getElementById('fitScreenChk');
       if (c) c.checked = !!on;
+      const s = document.getElementById('renderSizeSel');
+      if (s) s.disabled = !on;
     });
     ipcRenderer.on('software-render-state', function (e, on) {
       const c = document.getElementById('swChk');
@@ -2655,10 +3123,13 @@ function createLauncherWindow() {
     launcherWindow.webContents.send('flash-choice', config.flashChoice);
     launcherWindow.webContents.send('capture-mode-state', normalizeCaptureMode(config.captureMode));
     launcherWindow.webContents.send('force-gpu-state', config.forceGpu !== false);
+    launcherWindow.webContents.send('high-priority-state', config.highPriority !== false);
     launcherWindow.webContents.send('perf-diag-state', !!config.perfDiag);
     launcherWindow.webContents.send('game-entry-state', normalizeGameEntry(config.gameEntry));
     launcherWindow.webContents.send('flash-quality-state', normalizeFlashQuality(config.flashQuality));
     launcherWindow.webContents.send('fit-large-screen-state', config.fitLargeScreen !== false);
+    launcherWindow.webContents.send('render-size-state', normalizeRenderSize(config.renderSize));
+    launcherWindow.webContents.send('ui-scale-state', Number(config.uiScale) || 0);
     launcherWindow.webContents.send('software-render-state', !!config.softwareRender);
     // 窗口重建时补发在线人数，避免空白
     const lastOnline = online.getLast();
@@ -2750,6 +3221,7 @@ function createGameWindow(url, gameName, account, opts) {
   win.webContents.setZoomFactor(1.0);
 
   win.setMenu(null);
+  applyProcessPriority();
 
   // 首帧渲染完成后显示窗口，避免冷启动白屏
   win.once('ready-to-show', () => {
@@ -2795,6 +3267,25 @@ function createGameWindow(url, gameName, account, opts) {
     try { guest.setVisualZoomLevelLimits(1, 1); } catch (e) { /* ignore */ }
     guestWcs.push(guest);
     tabEntry.tabs++;
+    trackGameContents(guest);
+    applyProcessPriority();
+    try {
+      guest.on('did-finish-load', applyProcessPriority);
+      guest.on('did-stop-loading', applyProcessPriority);
+    } catch (e) { /* ignore */ }
+    // 只有用户真的开了加速才注入；1x 不碰未签名 DLL，避免杀软误报和无谓攻击面
+    try {
+      guest.on('dom-ready', () => {
+        if (guest.isDestroyed()) return;
+        if (Math.abs(currentSpeedRate - 1) < 1e-6) return;
+        try {
+          const pid = guest.getOSProcessId();
+          if (pid) injectSpeedHook(pid);
+        } catch (e) { /* ignore */ }
+        injectAllChildProcesses();
+        scheduleSpeedRescan();
+      });
+    } catch (e) { /* ignore */ }
     try {
       guest.once('destroyed', () => {
         tabEntry.tabs = Math.max(0, tabEntry.tabs - 1);
@@ -2819,6 +3310,8 @@ function createGameWindow(url, gameName, account, opts) {
       plain: plain,
       windowSlot: windowSlot,
       flashQuality: normalizeFlashQuality(config.flashQuality),
+      renderSize: normalizeRenderSize(config.renderSize),
+      tabDisplayMode: config.tabDisplayMode === 'taskbar' ? 'taskbar' : 'sidebar',
       fitLargeScreen: config.fitLargeScreen !== false
     });
 
@@ -2892,7 +3385,9 @@ function createGameWindow(url, gameName, account, opts) {
 
     if (fs.existsSync(speedctlPath)) {
       updateNativeRate(speed);
+      injectIntoGameContents();
       injectAllChildProcesses();
+      scheduleSpeedRescan();
     }
 
     log(`全局变速率已设置为: ${speed}x`);
@@ -2970,6 +3465,11 @@ function createGameWindow(url, gameName, account, opts) {
   });
 
   addListener('set-config', (event, key, value) => {
+    if (key === 'tabDisplayMode') value = value === 'taskbar' ? 'taskbar' : 'sidebar';
+    if (key === 'uiScale') {
+      const n = Number(value);
+      value = (n >= 1 && n <= 2) ? n : 0;
+    }
     config[key] = value;
     saveConfig();
   });
@@ -3144,6 +3644,160 @@ function createGameWindow(url, gameName, account, opts) {
   return win;
 }
 
+function quitFromTray() {
+  log('用户点击托盘退出');
+  isQuitting = true;
+  try {
+    // 退出前停止所有游戏窗口的音频并销毁BrowserView
+    for (let i = 0; i < gameWindows.length; i++) {
+      const gw = gameWindows[i];
+      if (gw.localTabs) {
+        gw.localTabs.forEach((tab) => {
+          if (tab.webContents && typeof tab.webContents.isDestroyed === 'function' && !tab.webContents.isDestroyed()) {
+            tab.webContents.setAudioMuted(true);
+            tab.webContents.removeAllListeners();
+          } else if (tab.webContents) {
+            tab.webContents.setAudioMuted(true);
+            tab.webContents.removeAllListeners();
+          }
+          if (tab.view && typeof tab.view.destroy === 'function') {
+            try {
+              tab.view.destroy();
+            } catch (e) {}
+          }
+        });
+        gw.localTabs = [];
+      }
+      if (gw.win && typeof gw.win.isDestroyed === 'function' && !gw.win.isDestroyed()) {
+        gw.win.destroy();
+      } else if (gw.win) {
+        gw.win.destroy();
+      }
+    }
+    gameWindows = [];
+    if (launcherWindow && !launcherWindow.isDestroyed()) {
+      launcherWindow.close();
+    }
+  } catch (e) {
+    log('关闭窗口失败: ' + e.message, 'ERROR');
+  }
+  flushLogBuffer();
+  app.quit();
+}
+
+let trayMenuWindow = null;
+
+function closeTrayMenu() {
+  const win = trayMenuWindow;
+  trayMenuWindow = null;
+  if (win && !win.isDestroyed()) {
+    try { win.close(); } catch (e) { /* ignore */ }
+  }
+}
+
+function buildTrayMenuHtml() {
+  const T = getThemeColors();
+  const hoverBg = T.btnHover || 'rgba(128,128,128,.12)';
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>' +
+    '*{margin:0;padding:0;box-sizing:border-box}' +
+    'html,body{height:100%;overflow:hidden;background:transparent}' +
+    'body{padding:6px;font-family:"Microsoft YaHei",sans-serif;color:' + T.text + ';' +
+      'background:' + T.bg1 + ';border:1px solid ' + T.border + ';border-radius:10px}' +
+    '.item{height:34px;display:flex;align-items:center;padding:0 12px;border-radius:7px;' +
+      'font-size:13px;cursor:default;user-select:none;white-space:nowrap}' +
+    '.item:hover{background:' + hoverBg + ';color:' + T.accent + '}' +
+    '.item.danger:hover{background:rgba(239,68,68,.14);color:#ef4444}' +
+    '.sep{height:1px;margin:4px 8px;background:' + T.border + '}' +
+    '</style></head><body>' +
+    '<div class="item" data-action="show">显示启动器</div>' +
+    '<div class="item" data-action="new">新建游戏窗口</div>' +
+    '<div class="sep"></div>' +
+    '<div class="item danger" data-action="quit">退出</div>' +
+    '<script>' +
+    'const { ipcRenderer } = require("electron");' +
+    'document.querySelectorAll(".item").forEach(function (el) {' +
+    '  el.addEventListener("click", function () { ipcRenderer.send("tray-menu-action", el.dataset.action); });' +
+    '});' +
+    'document.addEventListener("keydown", function (e) {' +
+    '  if (e.key === "Escape") ipcRenderer.send("tray-menu-close");' +
+    '});' +
+    'window.addEventListener("blur", function () { ipcRenderer.send("tray-menu-close"); });' +
+    '</scr' + 'ipt></body></html>';
+}
+
+function showTrayMenu() {
+  if (trayMenuWindow && !trayMenuWindow.isDestroyed()) {
+    closeTrayMenu();
+    return;
+  }
+  const scale = getUiScale();
+  const baseW = 180;
+  const baseH = 124;
+  const w = Math.round(baseW * scale);
+  const h = Math.round(baseH * scale);
+
+  const pt = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(pt);
+  const wa = display.workArea;
+  let tb = null;
+  try { tb = tray && typeof tray.getBounds === 'function' ? tray.getBounds() : null; } catch (e) { /* ignore */ }
+
+  let x = (tb && tb.width) ? (tb.x + tb.width - w) : (pt.x - w + 10);
+  let y = (tb && tb.height) ? (tb.y - h - 4) : (pt.y - h - 8);
+  // 任务栏在顶部时，菜单放到图标下方
+  if (y < wa.y + 4) y = (tb && tb.height) ? (tb.y + tb.height + 4) : (pt.y + 8);
+  x = Math.min(Math.max(x, wa.x + 4), wa.x + wa.width - w - 4);
+  y = Math.min(Math.max(y, wa.y + 4), wa.y + wa.height - h - 4);
+
+  const win = new BrowserWindow({
+    width: w,
+    height: h,
+    x: Math.round(x),
+    y: Math.round(y),
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    hasShadow: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+      webSecurity: false
+    }
+  });
+  trayMenuWindow = win;
+  try { win.setAlwaysOnTop(true, 'pop-up-menu'); } catch (e) { /* ignore */ }
+  try { win.webContents.setZoomFactor(scale); } catch (e) { /* ignore */ }
+  win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(buildTrayMenuHtml()));
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    try { win.webContents.setZoomFactor(scale); } catch (e) { /* ignore */ }
+    win.show();
+    win.focus();
+  });
+  win.on('blur', () => closeTrayMenu());
+  win.on('closed', () => { if (trayMenuWindow === win) trayMenuWindow = null; });
+}
+
+ipcMain.on('tray-menu-action', (event, action) => {
+  if (!trayMenuWindow || event.sender !== trayMenuWindow.webContents) return;
+  closeTrayMenu();
+  if (action === 'show') showLauncherWindow();
+  else if (action === 'new') createGameWindow(DEFAULT_URL, '火影忍者Online');
+  else if (action === 'quit') quitFromTray();
+});
+
+ipcMain.on('tray-menu-close', (event) => {
+  if (trayMenuWindow && event.sender === trayMenuWindow.webContents) closeTrayMenu();
+});
+
 function createTray() {
   const iconPath = getResourcePath('icons', 'Naruto.png');
   let trayIcon = null;
@@ -3155,73 +3809,13 @@ function createTray() {
   }
   
   tray = new Tray(trayIcon);
-  
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: '显示启动器',
-      click: () => {
-        showLauncherWindow();
-      }
-    },
-    {
-      label: '新建游戏窗口',
-      click: () => {
-        createGameWindow(DEFAULT_URL, '火影忍者Online');
-      }
-    },
-    {
-      type: 'separator'
-    },
-    {
-      label: '退出',
-      click: () => {
-        log('用户点击托盘退出');
-        isQuitting = true;
-        try {
-          // 退出前停止所有游戏窗口的音频并销毁BrowserView
-          for (let i = 0; i < gameWindows.length; i++) {
-            const gw = gameWindows[i];
-            if (gw.localTabs) {
-              gw.localTabs.forEach((tab) => {
-                if (tab.webContents && typeof tab.webContents.isDestroyed === 'function' && !tab.webContents.isDestroyed()) {
-                  tab.webContents.setAudioMuted(true);
-                  tab.webContents.removeAllListeners();
-                } else if (tab.webContents) {
-                  tab.webContents.setAudioMuted(true);
-                  tab.webContents.removeAllListeners();
-                }
-                if (tab.view && typeof tab.view.destroy === 'function') {
-                  try {
-                    tab.view.destroy();
-                  } catch (e) {}
-                }
-              });
-              gw.localTabs = [];
-            }
-            if (gw.win && typeof gw.win.isDestroyed === 'function' && !gw.win.isDestroyed()) {
-              gw.win.destroy();
-            } else if (gw.win) {
-              gw.win.destroy();
-            }
-          }
-          gameWindows = [];
-          if (launcherWindow && !launcherWindow.isDestroyed()) {
-            launcherWindow.close();
-          }
-        } catch (e) {
-          log('关闭窗口失败: ' + e.message, 'ERROR');
-        }
-        flushLogBuffer();
-        app.quit();
-      }
-    }
-  ]);
-  
   tray.setToolTip('火影忍者Online启动器');
-  tray.setContextMenu(contextMenu);
-  
+
   tray.on('click', () => {
     showLauncherWindow();
+  });
+  tray.on('right-click', () => {
+    showTrayMenu();
   });
 }
 
@@ -3236,10 +3830,6 @@ ipcMain.on('check-flash', (event) => {
 
 ipcMain.on('launch-game', (event, data) => {
   log('收到启动游戏请求: ' + data.name + ' - ' + data.url);
-  
-  if (isWindows11 && hvciStatus === 'enabled') {
-    showHVCIWarning();
-  }
   
   // 非火影（4399 等）用极简窗口，与火影工具栏解耦
   const plain = !/huoying\.qq\.com/i.test(data.url || '');
@@ -3368,6 +3958,7 @@ function createAccountWindow() {
       enableRemoteModule: false
     }
   });
+  applyUiScaleToWindow(accountWindow, 360, 500);
   
   accountWindow.on('closed', () => {
     accountWindow = null;
@@ -3426,6 +4017,15 @@ function createAccountWindow() {
   <script>
     const { ipcRenderer } = require('electron');
     let accounts = [];
+
+    function esc(v) {
+      return String(v == null ? '' : v)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
     
     function renderList() {
       const list = document.getElementById('accountList');
@@ -3436,8 +4036,8 @@ function createAccountWindow() {
       list.innerHTML = accounts.map(a => \`
         <div class="account-item" data-id="\${a.id}">
           <div class="account-info">
-            <div class="account-name">\${a.windowName || a.qq}</div>
-            <div class="account-qq">\${a.qq}</div>
+            <div class="account-name">\${esc(a.windowName || a.qq)}</div>
+            <div class="account-qq">\${esc(a.qq)}</div>
           </div>
           <div class="account-actions">
             <button class="action-btn open" onclick="launchAccount('\${a.id}')">⊞</button>
@@ -3454,9 +4054,9 @@ function createAccountWindow() {
       modal.innerHTML = \`
         <div class="modal-box">
           <h3>\${title}</h3>
-          <input id="qqInput" placeholder="QQ号/邮箱" value="\${account?.qq || ''}" />
-          <input id="pwdInput" type="password" placeholder="密码（可选）" value="\${account?.qqPwd || ''}" />
-          <input id="nameInput" placeholder="窗口名（可选）" value="\${account?.windowName || ''}" />
+          <input id="qqInput" placeholder="QQ号/邮箱" value="\${esc(account?.qq || '')}" />
+          <input id="pwdInput" type="password" placeholder="密码（可选）" value="\${esc(account?.qqPwd || '')}" />
+          <input id="nameInput" placeholder="窗口名（可选）" value="\${esc(account?.windowName || '')}" />
           <div style="display: flex; gap: 10px;">
             <button class="btn-cancel" onclick="this.parentElement.parentElement.parentElement.remove()">取消</button>
             <button class="btn-save" onclick="saveAccount('\${account?.id || ''}')">保存</button>
@@ -3516,13 +4116,21 @@ ipcMain.on('get-accounts', (event) => {
   log('[IPC] 收到 get-accounts 请求');
   loadAccounts();
   log('[IPC] 账号数量: ' + accounts.length);
-  
   try {
     event.sender.send('accounts-update', accounts);
     log('[IPC] 已向发送者发送 accounts-update 事件');
   } catch (err) {
     log('[IPC] 发送失败：' + err.message, 'ERROR');
   }
+});
+
+// 手动整理旧账号：重新从磁盘读取并执行「QQ + 区服」拆分
+ipcMain.handle('repair-accounts', () => {
+  const before = accounts.length;
+  loadAccounts(true);
+  broadcastAccountsChanged();
+  log('[账号整理] ' + before + ' -> ' + accounts.length);
+  return { ok: true, before: before, after: accounts.length };
 });
 
 ipcMain.on('debug-log', (event, message) => {
@@ -3684,6 +4292,7 @@ function addTabToGameWindow(gameWindow, name, account) {
   view.setBounds({ x: 0, y: toolbarHeight, width: contentBounds.width, height: contentBounds.height - toolbarHeight });
 
   const webContents = view.webContents;
+  trackGameContents(webContents);
   webContents.loadURL(DEFAULT_URL);
 
   const tabInfo = {
@@ -3710,6 +4319,16 @@ function addTabToGameWindow(gameWindow, name, account) {
     }
   });
   
+  webContents.on('dom-ready', () => {
+    if (Math.abs(currentSpeedRate - 1) < 1e-6) return;
+    try {
+      const pid = webContents.getOSProcessId();
+      if (pid) injectSpeedHook(pid);
+    } catch (e) { /* ignore */ }
+    injectAllChildProcesses();
+    scheduleSpeedRescan();
+  });
+
   webContents.on('did-finish-load', () => {
     log('Tab' + tabIndex + ' 加载完成');
     injectAllChildProcesses();
@@ -3745,6 +4364,7 @@ app.whenReady().then(() => {
   resetSettingsIfNeeded();
   loadConfig();
   loadAccounts();
+  applyProcessPriority();
   detectWindowsVersion();
   initSpeedControl();
   updater.init({
@@ -3769,6 +4389,7 @@ app.whenReady().then(() => {
   online.init({
     log: log,
     clientId: ensureClientId(),
+    version: CURRENT_VERSION,
     getCounts: getOnlineCounts,
     onUpdate: (data) => {
       if (launcherWindow && !launcherWindow.isDestroyed()) {
@@ -3905,6 +4526,14 @@ app.whenReady().then(() => {
     log('性能诊断日志已' + (on ? '开启' : '关闭'));
   });
 
+  // 游戏优先：即时调整本应用所有进程优先级（高/普通，不使用实时）
+  ipcMain.on('set-high-priority', (event, on) => {
+    config.highPriority = !!on;
+    saveConfig();
+    applyProcessPriority();
+    log('游戏优先已' + (on ? '开启' : '关闭'));
+  });
+
   // 游戏入口：新开窗口生效
   ipcMain.on('set-game-entry', (event, v) => {
     config.gameEntry = normalizeGameEntry(v);
@@ -3924,11 +4553,43 @@ app.whenReady().then(() => {
     });
   });
 
-  // 大屏适配：对新开窗口生效
+  // 大屏适配：立即通知已打开的游戏窗口重新计算缩放
   ipcMain.on('set-fit-large-screen', (event, on) => {
     config.fitLargeScreen = !!on;
     saveConfig();
     log('大屏适配已' + (on ? '开启' : '关闭'));
+    gameWindows.forEach((gw) => {
+      if (gw && gw.win && !gw.win.isDestroyed()) {
+        gw.win.webContents.send('fit-large-screen-update', config.fitLargeScreen);
+      }
+    });
+  });
+
+  // 大屏渲染尺寸：1920×1080 / 1600×900 / 1366×768 / 1280×720
+  ipcMain.on('set-render-size', (event, v) => {
+    config.renderSize = normalizeRenderSize(v);
+    saveConfig();
+    log('渲染分辨率已设为: ' + config.renderSize);
+    gameWindows.forEach((gw) => {
+      if (gw && gw.win && !gw.win.isDestroyed()) {
+        gw.win.webContents.send('render-size-update', config.renderSize);
+      }
+    });
+  });
+
+  // 界面缩放（启动器/账号窗口）
+  ipcMain.on('set-ui-scale', (event, v) => {
+    const n = Number(v);
+    config.uiScale = (n >= 1 && n <= 2) ? n : 0;
+    saveConfig();
+    log('界面缩放已设为: ' + (config.uiScale ? Math.round(config.uiScale * 100) + '%' : '自动'));
+    if (launcherWindow && !launcherWindow.isDestroyed()) {
+      applyUiScaleToWindow(launcherWindow, 360, 640);
+      try { launcherWindow.webContents.send('ui-scale-state', Number(config.uiScale) || 0); } catch (e) { /* ignore */ }
+    }
+    if (accountWindow && !accountWindow.isDestroyed()) {
+      applyUiScaleToWindow(accountWindow, 360, 500);
+    }
   });
 
   // 抓包缓存：查询占用 / 一键清理（设置面板用）
@@ -3995,6 +4656,7 @@ app.whenReady().then(() => {
 
   // F11 全局捕获：注册在 web-contents-created 上，可覆盖 webview guest（宿主页面 keydown 收不到）
   app.on('web-contents-created', (event, wc) => {
+    try { wc.on('did-finish-load', applyProcessPriority); } catch (e) {}
     wc.on('before-input-event', (event2, input) => {
       if (input.type !== 'keyDown' || input.key !== 'F11') return;
       let win = BrowserWindow.fromWebContents(wc);
@@ -4003,12 +4665,18 @@ app.whenReady().then(() => {
       // 仅游戏窗口响应 F11
       if (!gameWindows.some(g => g && g.win === win)) return;
       event2.preventDefault();
+      if (input.isAutoRepeat) return;
       win.setFullScreen(!win.isFullScreen());
     });
   });
   
   createLauncherWindow();
   createTray();
+
+  // 游戏优先：定时补设新出现的渲染/Flash 插件进程（只在高优先级开启时）
+  setInterval(() => {
+    if (config.highPriority !== false) applyProcessPriority();
+  }, 15000);
 
   // 性能诊断：开启后每 60s 记录一次逐进程内存/CPU 到 userData/perf.log
   if (config.perfDiag) {
@@ -4026,14 +4694,6 @@ app.whenReady().then(() => {
       fs.appendFileSync(path.join(app.getPath('userData'), 'perf.log'), head + detail + '\n');
     } catch (e) {}
   }, 60000);
-
-
-  
-  setTimeout(() => {
-    if (isWindows11 && hvciStatus === 'enabled') {
-      showHVCIWarning();
-    }
-  }, 3000);
 });
 
 app.on('window-all-closed', () => {
@@ -4051,6 +4711,10 @@ app.on('before-quit', () => {
   // 真正退出：允许启动器窗口关闭（否则其 close 拦截会让 app.quit() 被取消，
   // 自动更新 quitAndInstall() / 托盘退出都会失效）
   isQuitting = true;
+
+  // 账号异步保存可能还没落盘，退出前同步补一次
+  flushAccountSaveSync();
+
 
   // 抓包开启时，退出前拉起独立导出进程（等主进程退出、netlog 写完后自动处理）
   // stats：解析 net-log → 生成 6 张 Excel（组织统计）

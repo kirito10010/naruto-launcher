@@ -12,10 +12,11 @@
 //   generic provider 只需要 GET <feed>/latest.yml，不需要 atom feed；
 //   latest.yml 里的文件是相对路径，会以 feed URL 为 base 解析，下载自动走同一个源。
 //
-// 1.7.0 起：自建镜像（网站「项目管理 → 版本发布」）作为首选更新源，
+// 1.7.0 起：自建镜像（网站「项目管理 → 版本发布」）加入更新源；
+//   1.13.0 起腾讯云 COS 作为国内首选；2026-11-03 起缤纷云 S4 作为国内首选。
 //   GitHub 直连与加速代理保留为兜底。选源时并发拉取各源的 latest.yml，
-//   取**版本号最高**的那个；版本相同则优先网站镜像（速度最快）。
-//   这样即使镜像还没传新版本，用户也能从 GitHub 拿到更新，不会卡住。
+//   取**版本号最高**的那个；版本相同则优先国内镜像（S4 → COS → 网站）。
+//   这样即使某个镜像还没传新版本，用户也能从其它源拿到更新，不会卡住。
 const { app, BrowserWindow, ipcMain, screen, dialog, net } = require('electron');
 const { autoUpdater } = require('electron-updater');
 
@@ -28,10 +29,15 @@ const GH_LATEST = `https://github.com/${OWNER}/${REPO}/releases/latest/download`
 const MIRROR = process.env.HYOL_UPDATE_MIRROR || 'http://49.235.142.253/api/release/public/naruto-launcher';
 // 腾讯云 COS 直链（国内镜像，带宽充足；按流量计费，比自建 6Mbps 服务器快很多）
 const COS_MIRROR = process.env.HYOL_UPDATE_COS || 'https://lijin-1301545439.cos.ap-shanghai.myqcloud.com/naruto-launcher';
+// 缤纷云 S4 直链（S4 是产品名，兼容 S3 协议；控制台里的 s3://naruto-launcher/ 对应下面的公开 HTTPS 地址）
+// 桶需开启公开读取；50GB 存储 + 每月 10GB 流量免费
+// HYOL_UPDATE_S4 仅用于本地联调
+const S4_MIRROR = process.env.HYOL_UPDATE_S4 || 'https://naruto-launcher.s3.bitiful.net';
 
 // 更新源候选表：顺序即优先级（版本相同时优先靠前的）
-// mirror: true 表示自建/国内镜像，可在设置里切换「优先国内镜像 / 优先 GitHub」
+// mirror: true 表示国内镜像，可在设置里切换「优先国内镜像 / 优先 GitHub」
 const FEEDS = [
+  { name: '缤纷云 S4', url: S4_MIRROR, mirror: true },
   { name: '腾讯云 COS', url: COS_MIRROR, mirror: true },
   { name: '网站镜像', url: MIRROR, mirror: true },
   { name: 'GitHub 直连', url: GH_LATEST },
@@ -170,7 +176,7 @@ function cmpVersion(a, b) {
   return 0;
 }
 
-// 按设置计算优先级顺序：'mirror' = 国内镜像优先（COS → 网站），'github' = GitHub/代理优先（镜像兜底）
+// 按设置计算优先级顺序：'mirror' = 国内镜像优先（S4 → COS → 网站），'github' = GitHub/代理优先（镜像兜底）
 function computeFeedOrder() {
   const mirrors = FEEDS.map((f, i) => (f.mirror ? i : -1)).filter((i) => i >= 0);
   const others = FEEDS.map((_, i) => i).filter((i) => mirrors.indexOf(i) < 0);
