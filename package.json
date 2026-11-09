@@ -1,6 +1,6 @@
 {
   "name": "naruto-online-launcher",
-  "version": "2.1.0",
+  "version": "2.3.0",
   "description": "火影忍者Online页游启动器",
   "main": "main.js",
   "scripts": {
@@ -14,7 +14,7 @@
     "game",
     "launcher"
   ],
-  "author": "",
+  "author": "lijin <a3025863517@163.com>",
   "license": "ISC",
   "devDependencies": {
     "electron": "^11.5.0",
@@ -24,26 +24,12 @@
     "appId": "com.example.naruto-launcher",
     "productName": "NarutoOnlineLauncher",
     "directories": {
-      "output": "release-v2.1.0"
+      "output": "release-v2.3.0"
     },
     "icon": "resources/icons/Naruto.png",
     "files": [
       "main.js",
-      "preload.js",
-      "game.html",
-      "flash-quality-low-preload.js",
-      "flash-quality-medium-preload.js",
-      "browser.html",
-      "online.js",
-      "capture.js",
-      "capture-dump.js",
-      "quiz-export.js",
-      "miao-export.js",
-      "export.js",
-      "xlsx.js",
-      "updater.js",
-      "update.html",
-      "progress.html"
+      "src/**/*"
     ],
     "extraResources": [
       {
@@ -57,6 +43,10 @@
       {
         "from": "resources/icons/",
         "to": "icons"
+      },
+      {
+        "from": "resources/videos/",
+        "to": "videos"
       }
     ],
     "win": {

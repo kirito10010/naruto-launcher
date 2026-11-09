@@ -19,12 +19,12 @@ const MAX_BODY = 1024;
 const DEFAULT_PORT = 10001;
 const SNAPSHOT_EVERY = 10 * 60 * 1000;          // 每 10 分钟一个统计点
 const STORAGE_VERSION = 1;
-const ACTIVE_MONTHS = 3;                        // 当前月 + 前两个月
+const ACTIVE_MONTHS = 2;                        // 当前月 + 上个月（覆盖最近 30 天视图）
 const MAX_HISTORY = 20000;                      // 兜底上限
 
 const CONFIG_DIR = path.join(app.getPath('appData'), 'hyol-online-server');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-// 新版按月分文件：stats/YYYY-MM.json；超过 3 个月的移到 stats/archive/
+// 新版按月分文件：stats/YYYY-MM.json；超出常驻月份（2 个月）的移到 stats/archive/
 const STATS_DIR = path.join(CONFIG_DIR, 'stats');
 const ARCHIVE_DIR = path.join(STATS_DIR, 'archive');
 const LEGACY_STATS_FILE = path.join(CONFIG_DIR, 'stats.json');
@@ -200,7 +200,7 @@ function shiftMonthKey(key, delta) {
   return d.getFullYear() + '-' + pad2(d.getMonth() + 1);
 }
 
-// 当前月 + 前两个月，共 3 个自然月
+// 当前月 + 上个月（覆盖最近 30 天）；更早的月份归档，只有主动查全部历史才读
 function activeMonthKeys(now) {
   const cur = monthKeyFromTs(now || Date.now());
   const out = [];
@@ -289,7 +289,7 @@ function migrateLegacyIfNeeded() {
   }
 }
 
-// 超出当前 3 个月的月份文件移到 stats/archive/
+// 超出常驻月份（2 个月）的月份文件移到 stats/archive/
 function archiveOldMonths() {
   ensureStatsDirs();
   const active = new Set(activeMonthKeys());
@@ -307,7 +307,7 @@ function archiveOldMonths() {
   }
 }
 
-// 只加载当前月 + 前两个月；更久的归档文件不读
+// 只加载当前月 + 上个月；更久的归档文件不读
 function loadHistory() {
   try {
     ensureStatsDirs();
@@ -513,16 +513,18 @@ function handleRequest(req, res) {
       // 只有主动点「全部历史」才读取 archive；读完不常驻内存
       points = readAllHistory();
     } else {
-      hours = Number(u.searchParams.get('hours')) || 24;
-      hours = Math.max(1, Math.min(2160, hours));
+      hours = Number(u.searchParams.get('hours')) || 720;
+      hours = Math.max(1, Math.min(720, hours));
       since = Date.now() - hours * 3600 * 1000;
       points = history.filter((r) => Number(r.ts) >= since);
     }
 
-    // 最多 720 个点，保证浏览器绘制流畅
+    // 最多 720 个点，保证浏览器绘制流畅；超过时按组求均值
     const MAX_POINTS = 720;
+    let stepMinutes = 10;
     if (points.length > MAX_POINTS) {
       const step = Math.ceil(points.length / MAX_POINTS);
+      stepMinutes = step * 10;
       const sampled = [];
       for (let i = 0; i < points.length; i += step) {
         const group = points.slice(i, i + step);
@@ -546,6 +548,8 @@ function handleRequest(req, res) {
       scope: all ? 'all' : 'active',
       hours: hours,
       since: since,
+      stepMinutes: stepMinutes,
+      sampled: stepMinutes > 10,
       points: points
     });
   }

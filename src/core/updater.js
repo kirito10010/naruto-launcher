@@ -13,9 +13,12 @@
 //   latest.yml 里的文件是相对路径，会以 feed URL 为 base 解析，下载自动走同一个源。
 //
 // 1.7.0 起：自建镜像（网站「项目管理 → 版本发布」）加入更新源；
-//   1.13.0 起腾讯云 COS 作为国内首选；2026-11-03 起缤纷云 S4 作为国内首选。
+//   1.13.0 起腾讯云 COS 作为国内首选；2026-11-03 起缤纷云 S4 作为国内首选；
+//   2026-11-09 起移除腾讯云 COS（只保留缤纷云 + GitHub）。
+//   2026-11-07 起：自建镜像为明文 HTTP，会破坏更新包完整性校验，已移出 FEEDS
+//   （官网仍可手动下载；上 HTTPS 后可再启用）。
 //   GitHub 直连与加速代理保留为兜底。选源时并发拉取各源的 latest.yml，
-//   取**版本号最高**的那个；版本相同则优先国内镜像（S4 → COS → 网站）。
+//   取**版本号最高**的那个；版本相同则缤纷云优先，其它源按探测速度从快到慢。
 //   这样即使某个镜像还没传新版本，用户也能从其它源拿到更新，不会卡住。
 const { app, BrowserWindow, ipcMain, screen, dialog, net } = require('electron');
 const { autoUpdater } = require('electron-updater');
@@ -25,21 +28,23 @@ const REPO = 'naruto-launcher';
 // GitHub 版本无关的稳定地址：/releases/latest/download/<asset>
 const GH_LATEST = `https://github.com/${OWNER}/${REPO}/releases/latest/download`;
 // 自建镜像地址（网站的「项目管理 → 版本发布」对外提供 latest.yml）
+// 注意：目前是明文 HTTP，不能作为静默更新源（latest.yml 与安装包同源，可被中间人替换），
+// 因此暂不放进 FEEDS。启用前必须先上 HTTPS。
 // HYOL_UPDATE_MIRROR 仅用于本地联调
 const MIRROR = process.env.HYOL_UPDATE_MIRROR || 'http://49.235.142.253/api/release/public/naruto-launcher';
-// 腾讯云 COS 直链（国内镜像，带宽充足；按流量计费，比自建 6Mbps 服务器快很多）
-const COS_MIRROR = process.env.HYOL_UPDATE_COS || 'https://lijin-1301545439.cos.ap-shanghai.myqcloud.com/naruto-launcher';
 // 缤纷云 S4 直链（S4 是产品名，兼容 S3 协议；控制台里的 s3://naruto-launcher/ 对应下面的公开 HTTPS 地址）
-// 桶需开启公开读取；50GB 存储 + 每月 10GB 流量免费
+// 桶需开启公开读取：10GB 存储 + 每月 10GB 流量免费
 // HYOL_UPDATE_S4 仅用于本地联调
 const S4_MIRROR = process.env.HYOL_UPDATE_S4 || 'https://naruto-launcher.s3.bitiful.net';
 
-// 更新源候选表：顺序即优先级（版本相同时优先靠前的）
-// mirror: true 表示国内镜像，可在设置里切换「优先国内镜像 / 优先 GitHub」
+// 更新源候选表：
+//   - 先并发拉取各源 latest.yml，选版本号最高的；
+//   - 版本相同时缤纷云（preferred）优先；
+//   - 缤纷云不可用时，其余源按探测耗时从快到慢选择。
+// 注意：所有源都必须是 HTTPS。明文 HTTP 源会让 latest.yml 与安装包同时可被替换，
+// electron-updater 的 sha512 校验也就失去意义，因此不再收录。
 const FEEDS = [
-  { name: '缤纷云 S4', url: S4_MIRROR, mirror: true },
-  { name: '腾讯云 COS', url: COS_MIRROR, mirror: true },
-  { name: '网站镜像', url: MIRROR, mirror: true },
+  { name: '缤纷云 S4', url: S4_MIRROR, mirror: true, preferred: true },
   { name: 'GitHub 直连', url: GH_LATEST },
   { name: 'ghfast.top', url: 'https://ghfast.top/' + GH_LATEST },
   { name: 'gh-proxy.com', url: 'https://gh-proxy.com/' + GH_LATEST },
@@ -141,21 +146,31 @@ function netGet(url, timeoutMs, follow) {
   });
 }
 
-// 并发探测所有候选源，按 FEEDS 顺序返回第一个可用的下标；全部失败返回 null
+// 并发探测所有候选源：缤纷云优先，其余按探测耗时从快到慢；全部失败返回 null
 async function probeFeeds() {
-  const results = await Promise.all(FEEDS.map((f) => netGet(f.url + '/latest.yml', PROBE_TIMEOUT)));
-  for (let i = 0; i < FEEDS.length; i++) {
-    const r = results[i];
-    if (!r || r.status < 200 || r.status >= 400) continue;
+  const results = await Promise.all(FEEDS.map(async (f, i) => {
+    const start = Date.now();
+    const r = await netGet(f.url + '/latest.yml', PROBE_TIMEOUT);
+    const ms = Date.now() - start;
+    if (!r || r.status < 200 || r.status >= 400) return null;
     // 200 时确认拿到的确实是 latest.yml，避免代理返回 200 + HTML 错误页
     if (r.status === 200 && r.body && r.body.indexOf('version:') === -1) {
-      log('[update] 更新源 ' + FEEDS[i].name + ' 返回内容异常，跳过', 'WARN');
-      continue;
+      log('[update] 更新源 ' + f.name + ' 返回内容异常，跳过', 'WARN');
+      return null;
     }
-    info('更新源可用: ' + FEEDS[i].name + ' (HTTP ' + r.status + ')');
-    return i;
-  }
-  return null;
+    return { idx: i, ms: ms };
+  }));
+  const avail = results.filter(Boolean);
+  if (!avail.length) return null;
+  avail.sort((a, b) => {
+    const pa = FEEDS[a.idx].preferred ? 0 : 1;
+    const pb = FEEDS[b.idx].preferred ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    return a.ms - b.ms;
+  });
+  const best = avail[0];
+  info('更新源可用: ' + FEEDS[best.idx].name + '（' + best.ms + 'ms）');
+  return best.idx;
 }
 
 // 从 latest.yml 文本里取 version
@@ -176,7 +191,7 @@ function cmpVersion(a, b) {
   return 0;
 }
 
-// 按设置计算优先级顺序：'mirror' = 国内镜像优先（S4 → COS → 网站），'github' = GitHub/代理优先（镜像兜底）
+// 按设置计算优先级顺序：'mirror' = 国内镜像优先（S4），'github' = GitHub/代理优先（镜像兜底）
 function computeFeedOrder() {
   const mirrors = FEEDS.map((f, i) => (f.mirror ? i : -1)).filter((i) => i >= 0);
   const others = FEEDS.map((_, i) => i).filter((i) => mirrors.indexOf(i) < 0);
@@ -187,15 +202,17 @@ function computeFeedOrder() {
 }
 
 // 选源：并发拉各源的 latest.yml（跟随重定向拿正文），
-// 先取版本号最高的那一批，再按设置的优先级决定用哪个源。
-// 全部拿不到清单时退回“能连上就用”。
+// 先取版本号最高的那一批；版本相同时缤纷云优先，其余按探测耗时从快到慢。
+// 全部拿不到清单时退回“能连上就用”（同样缤纷云优先 + 最快）。
 async function pickFeed() {
   const results = await Promise.all(FEEDS.map(async (f, i) => {
+    const start = Date.now();
     const r = await netGet(f.url + '/latest.yml', PROBE_TIMEOUT, true);
+    const ms = Date.now() - start;
     if (!r || r.status !== 200 || !r.body) return null;
     const version = parseVersionFromYml(r.body);
     if (!version) return null;
-    return { idx: i, version: version };
+    return { idx: i, version: version, ms: ms };
   }));
 
   feedOrder = computeFeedOrder();
@@ -211,13 +228,25 @@ async function pickFeed() {
   if (seen.length) info('各源版本: ' + seen.join(', '));
 
   if (maxV) {
-    for (const idx of feedOrder) {
-      const r = results[idx];
-      if (r && cmpVersion(r.version, maxV) === 0) {
-        orderPos = feedOrder.indexOf(idx);
-        info('选中更新源: ' + FEEDS[idx].name + ' (v' + r.version + '，策略=' + getUpdateSource() + ')');
-        return idx;
-      }
+    const cands = results
+      .filter((r) => r && cmpVersion(r.version, maxV) === 0)
+      .sort((a, b) => {
+        const pa = FEEDS[a.idx].preferred ? 0 : 1;
+        const pb = FEEDS[b.idx].preferred ? 0 : 1;
+        if (pa !== pb) return pa - pb;
+        return a.ms - b.ms;
+      });
+    if (cands.length) {
+      const chosen = cands[0];
+      // 下载失败时：先换其它同版本的源（快→慢），最后再试剩余源
+      const restSame = cands.slice(1).map((c) => c.idx);
+      feedOrder = [chosen.idx].concat(
+        restSame,
+        computeFeedOrder().filter((i) => i !== chosen.idx && restSame.indexOf(i) < 0)
+      );
+      orderPos = 0;
+      info('选中更新源: ' + FEEDS[chosen.idx].name + ' (v' + chosen.version + '，' + chosen.ms + 'ms)');
+      return chosen.idx;
     }
   }
 
@@ -273,7 +302,7 @@ function showUpdateWindow(updateInfo) {
     webPreferences: { nodeIntegration: true, contextIsolation: false }
   });
   updateWindow.setMenu(null);
-  updateWindow.loadFile('update.html');
+  updateWindow.loadFile('src/ui/update.html');
 
   updateWindow.webContents.once('did-finish-load', () => {
     updateWindow.webContents.send('update-info', {
@@ -316,7 +345,7 @@ function showProgressWindow() {
     webPreferences: { nodeIntegration: true, contextIsolation: false }
   });
   progressWindow.setMenu(null);
-  progressWindow.loadFile('progress.html');
+  progressWindow.loadFile('src/ui/progress.html');
   progressWindow.once('ready-to-show', () => { if (progressWindow) progressWindow.show(); });
   progressWindow.on('closed', () => { progressWindow = null; });
 }

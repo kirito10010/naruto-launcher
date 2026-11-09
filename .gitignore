@@ -61,3 +61,28 @@ _pkg_item2/
 _excel/
 _guild.json
 _guild.csv
+
+# ===== 开源推送前的本地/敏感数据 =====
+# AI 分析产物（内部 spec，不需要公开）
+.comate/
+
+# 抓包、导出与截图（体积大，可能包含账号/会话/区服信息）
+*抓包*
+火影商城特惠/
+*.jsonl
+netlog-*.json
+*.flv
+
+# 游戏素材（版权与体积原因，不随仓库分发；保留空目录占位，避免打包时目录不存在）
+resources/videos/*
+!resources/videos/.gitkeep
+
+# 内部网站接口说明（如需公开给网站开发，删除这一行即可）
+docs/更新镜像接口说明.md
+
+# 临时脚本与截图
+_*.js
+_*.png
+_*.jpg
+_*.json
+

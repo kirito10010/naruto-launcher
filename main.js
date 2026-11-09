@@ -1,18 +1,53 @@
-const { app, BrowserWindow, BrowserView, ipcMain, screen, Tray, nativeImage, dialog, webContents } = require('electron');
-const updater = require('./updater');
+const { app, BrowserWindow, ipcMain, screen, Tray, nativeImage, dialog, webContents, globalShortcut } = require('electron');
+const updater = require('./src/core/updater');
 const path = require('path');
 const fs = require('fs');
-const { execFile, exec, spawn, spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const os = require('os');
-const capture = require('./capture');
-const online = require('./online');
+const capture = require('./src/capture/capture');
+const online = require('./src/core/online');
+const videoCache = require('./src/core/video-cache');
+const debugConsole = require('./src/core/debug-console');
+const urlTool = require('./src/core/url-tool');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // 导出模式：由主进程退出时 spawn 的子进程执行（见 before-quit），不建任何窗口
 if (process.argv.includes('--export')) {
   const _idx = process.argv.indexOf('--export');
   const _mainPid = parseInt(process.argv[_idx + 1], 10) || 0;
   app.whenReady()
-    .then(() => require('./export').runExport({ mainPid: _mainPid }))
+    .then(() => require('./src/export/export').runExport({ mainPid: _mainPid }))
     .catch((e) => {
       try {
         fs.appendFileSync(path.join(app.getPath('userData'), 'export-error.log'),
@@ -32,7 +67,7 @@ if (process.argv.includes('--dump-capture')) {
   const _dIdx = process.argv.indexOf('--dump-capture');
   const _dPid = parseInt(process.argv[_dIdx + 1], 10) || 0;
   app.whenReady()
-    .then(() => require('./capture-dump').runDump({ mainPid: _dPid }))
+    .then(() => require('./src/capture/capture-dump').runDump({ mainPid: _dPid }))
     .catch((e) => {
       try {
         fs.appendFileSync(path.join(app.getPath('userData'), 'capture-dump-error.log'),
@@ -50,7 +85,7 @@ if (process.argv.includes('--export-quiz')) {
   const _qIdx = process.argv.indexOf('--export-quiz');
   const _qPid = parseInt(process.argv[_qIdx + 1], 10) || 0;
   app.whenReady()
-    .then(() => require('./quiz-export').runQuizExport({ mainPid: _qPid }))
+    .then(() => require('./src/export/quiz-export').runQuizExport({ mainPid: _qPid }))
     .catch((e) => {
       try {
         fs.appendFileSync(path.join(app.getPath('userData'), 'quiz-export-error.log'),
@@ -68,10 +103,28 @@ if (process.argv.includes('--export-miao')) {
   const _mIdx = process.argv.indexOf('--export-miao');
   const _mPid = parseInt(process.argv[_mIdx + 1], 10) || 0;
   app.whenReady()
-    .then(() => require('./miao-export').runMiaoExport({ mainPid: _mPid }))
+    .then(() => require('./src/export/miao-export').runMiaoExport({ mainPid: _mPid }))
     .catch((e) => {
       try {
         fs.appendFileSync(path.join(app.getPath('userData'), 'miao-export-error.log'),
+          '[' + new Date().toISOString() + '] ' + (e && e.stack || String(e)) + '\n');
+      } catch (_) {}
+    })
+    // 同 --export：避免 Electron 退出流程在 teardown 阶段崩溃
+    .finally(() => setTimeout(() => process.exit(0), 200));
+  return;
+}
+
+// [商城特惠抓包] 由主进程退出时 spawn 的子进程执行（见 before-quit），不建任何窗口
+// 解析商城商品列表（限购 / 折扣价 / 活动时间 / 每个商品当日窗口）+ 从 CDP jsonl 取商品图标
+if (process.argv.includes('--export-shop')) {
+  const _sIdx = process.argv.indexOf('--export-shop');
+  const _sPid = parseInt(process.argv[_sIdx + 1], 10) || 0;
+  app.whenReady()
+    .then(() => require('./src/export/shop-export').runShopExport({ mainPid: _sPid }))
+    .catch((e) => {
+      try {
+        fs.appendFileSync(path.join(app.getPath('userData'), 'shop-export-error.log'),
           '[' + new Date().toISOString() + '] ' + (e && e.stack || String(e)) + '\n');
       } catch (_) {}
     })
@@ -117,12 +170,14 @@ const DEFAULT_SETTINGS = {
   captureMode: 'off',
   forceGpu: true,
   softwareRender: false,
-  perfDiag: false,
   highPriority: true,
   flashQuality: 'high',
-  renderSize: '1920x1080',
+  // 渲染分辨率（固定 16:9）：只决定游戏渲染像素，窗口大小与之无关；默认 1600×900
+  renderWidth: 1600,
+  renderSizeMigrated: '2.3.1',
+  gameOpacity: 1,
+  renderDefault: '',
   gameEntry: 'qqgame',
-  fitLargeScreen: true,
   uiScale: 0,
   settingsResetId: SETTINGS_RESET_ID
 };
@@ -358,8 +413,9 @@ const EARLY_CONFIG = readConfigSync();
 // 抓包模式：off（关闭）/ stats（组织统计 → 生成 Excel）/ full（全量抓包 → 导出原始文件）
 //           / quiz（题库抓包 → 解析「考官红豆·忍者检测」题目，导出 JSON）
 //           / miao（题库抓包 → 解析「喵问答」题目 + 配图，导出 JSON）
+//           / shop（商城特惠抓包 → 商品/限购/折扣价/时间范围 + 商品图片，导出 JSON）
 function normalizeCaptureMode(v) {
-  if (v === 'off' || v === 'stats' || v === 'full' || v === 'quiz' || v === 'miao') return v;
+  if (v === 'off' || v === 'stats' || v === 'full' || v === 'quiz' || v === 'miao' || v === 'shop') return v;
   return v === true ? 'stats' : 'off';   // 兼容老的 captureEnabled: true
 }
 
@@ -375,7 +431,7 @@ function flashQualityPatchSource(quality) {
   if (quality !== 'low' && quality !== 'medium') return '';
   const file = quality === 'low' ? 'flash-quality-low-preload.js' : 'flash-quality-medium-preload.js';
   try {
-    return fs.readFileSync(path.join(__dirname, file), 'utf8');
+    return fs.readFileSync(path.join(__dirname, 'src', 'ui', file), 'utf8');
   } catch (e) {
     return '';
   }
@@ -400,11 +456,49 @@ function normalizeGameEntry(v) {
   return v === 'qqgame' ? 'qqgame' : 'official';
 }
 
-// 大屏渲染尺寸（大屏适配开启时生效）：内部按这个尺寸渲染，再等比放大铺满窗口
-const RENDER_SIZES = ['1920x1080', '1600x900', '1366x768', '1280x720'];
-function normalizeRenderSize(v) {
-  if (v === '1020x600') return '1280x720';
-  return RENDER_SIZES.indexOf(v) >= 0 ? v : '1920x1080';
+// 渲染分辨率配置（固定 16:9）
+// 分辨率只决定游戏渲染像素（越低越省性能），渲染层再缩放到窗口铺满。
+// 游戏本身最大只到 1920×1080；只保留 5 个常用档位，从高到低排列。
+const RENDER_WIDTHS = [1920, 1600, 1440, 1280];
+const RENDER_MIGRATION_ID = '2.3.1';
+
+function normalizeRenderWidth(v) {
+  const n = parseInt(v, 10);
+  return RENDER_WIDTHS.indexOf(n) >= 0 ? n : 1600;
+}
+
+// 游戏窗口透明度：0.1 ~ 1（100% = 不透明）
+function normalizeGameOpacity(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return 1;
+  return Math.max(0.1, Math.min(1, n));
+}
+
+// 统一设置所有游戏窗口透明度（滑杆 / Ctrl+←→ 都走这里）
+function applyGameOpacity(pct) {
+  const op = normalizeGameOpacity(Number(pct) / 100);
+  config.gameOpacity = op;
+  saveConfig();
+  const pctRound = Math.round(op * 100);
+  gameWindows.forEach((gw) => {
+    if (!gw || !gameWinAlive(gw.win)) return;
+    try { gw.win.setOpacity(op); } catch (e) { /* ignore */ }
+    try { gw.win.webContents.send('opacity-state', pctRound); } catch (e) { /* ignore */ }
+  });
+  return op;
+}
+
+function renderHeightOf(w) {
+  return Math.round((Number(w) || 1920) * 9 / 16);
+}
+
+function getRenderConfig() {
+  const w = normalizeRenderWidth(config.renderWidth);
+  return {
+    width: w,
+    height: renderHeightOf(w),
+    options: RENDER_WIDTHS.map(function (x) { return { w: x, h: renderHeightOf(x) }; })
+  };
 }
 const CAPTURE_MODE =
   process.argv.includes('--capture-full') ? 'full' :
@@ -416,7 +510,36 @@ const CAPTURE_MODE =
 
 let launcherWindow = null;
 let gameWindows = [];
-let gameWindowCount = 0;
+let lastGameWin = null;
+const bossHiddenWindows = new Set();
+
+function gameWinAlive(w) {
+  return !!(w && !w.isDestroyed());
+}
+
+// 老板键：先还原被隐藏的游戏窗口；没有隐藏窗口时，隐藏当前 / 最后一个游戏窗口
+function toggleBossKey(explicitWin) {
+  for (const g of gameWindows) {
+    if (gameWinAlive(g.win) && bossHiddenWindows.has(g.win.id)) {
+      bossHiddenWindows.delete(g.win.id);
+      try { g.win.show(); g.win.focus(); } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+  let target = gameWinAlive(explicitWin) ? explicitWin : null;
+  if (!target) {
+    const focused = BrowserWindow.getFocusedWindow();
+    if (focused && gameWindows.some((g) => g.win === focused)) target = focused;
+  }
+  if (!target && gameWinAlive(lastGameWin)) target = lastGameWin;
+  if (!target) target = gameWindows.map((g) => g.win).find(gameWinAlive) || null;
+  if (!target) return;
+  try {
+    bossHiddenWindows.add(target.id);
+    target.hide();
+    lastGameWin = target;
+  } catch (e) { /* ignore */ }
+}
 // 窗口槽位：本次运行内按窗口创建顺序单调递增（1 起），用于生成互不冲突的会话分区名
 let gameWindowSlotCounter = 0;
 let tray = null;
@@ -612,6 +735,7 @@ function loadAccounts(force) {
         accounts = readEncryptedAccounts();
         accountsLoaded = true;
         migrateAccountsByZone();
+        sanitizeCredentials();
         // 加密文件已经可用，顺手清掉历史遗留的明文文件
         removePlaintextAccounts();
         log(`账号已加载: ${accounts.length} 个（加密文件）`);
@@ -635,6 +759,7 @@ function loadAccounts(force) {
       const data = fs.readFileSync(ACCOUNTS_FILE, 'utf8');
       accounts = JSON.parse(data);
       migrateAccountsByZone();
+      sanitizeCredentials();
       accountsLoaded = true;
       // 加密迁移失败不能把已解析出来的账号丢掉：继续用明文文件跑，只提示一次
       try {
@@ -737,6 +862,62 @@ function migrateAccountsByZone() {
     saveAccounts();
     log('账号多区整理: ' + before + ' -> ' + accounts.length);
   }
+}
+
+// 清理历史串号凭证：uin 不一致、skey 属于别的 QQ 的，清空该条凭证，回退账号密码登录
+function sanitizeCredentials() {
+  let changed = false;
+  const skeyOwner = new Map();
+  accounts.forEach((a) => {
+    const c = a && a.credential;
+    if (c && c.skey) skeyOwner.set(String(c.skey), String(a.qq || '').replace(/\D/g, ''));
+  });
+  accounts.forEach((a) => {
+    const c = a && a.credential;
+    if (!c || !c.login_url) return;
+    const expected = normalizeUinValue(c.uin) || normalizeUinValue(a.qq);
+    if (c.skey && skeyOwner.has(String(c.skey))) {
+      const owner = skeyOwner.get(String(c.skey));
+      if (owner && expected && owner !== String(expected)) {
+        log('[credential] 清理串号凭证: ' + a.qq + ' 区服=' + (c.zone_id || '-'), 'WARN');
+        a.credential = {
+          zone_id: c.zone_id || '',
+          zone_name: c.zone_name || '',
+          login_url: '',
+          skey: '',
+          cookies: [],
+          expires_at: '',
+          captured_at: ''
+        };
+        a.lastZoneId = String(c.zone_id || 'default');
+        changed = true;
+        return;
+      }
+    }
+    const list = Array.isArray(c.cookies) ? c.cookies : [];
+    const kept = list.filter((k) => {
+      if (!k || !k.name || !k.value) return false;
+      if (/^(uin|p_uin|ptui_loginuin|luin|pt2gguin)$/i.test(k.name)) {
+        const v = normalizeUinValue(k.value);
+        if (v && expected && v !== expected) return false;
+      }
+      if ((k.name === 'skey' || k.name === 'p_skey') && skeyOwner.has(String(k.value))) {
+        const owner = skeyOwner.get(String(k.value));
+        if (owner && expected && owner !== String(expected) && k.value !== c.skey) return false;
+      }
+      return true;
+    });
+    if (kept.length !== list.length) {
+      c.cookies = kept;
+      changed = true;
+    }
+    const skeyCookie = (c.cookies || []).find((k) => k && k.name === 'skey' && /huoying\.qq\.com$/i.test(k.domain || ''));
+    if (c.skey && skeyCookie && skeyCookie.value !== c.skey) {
+      skeyCookie.value = c.skey;
+      changed = true;
+    }
+  });
+  if (changed) saveAccounts();
 }
 
 function saveAccounts() {
@@ -842,15 +1023,6 @@ function updateAccount(accountId, qq, password, windowName) {
     return true;
   }
   return false;
-}
-
-function isLoginPage(url) {
-  if (!url) return false;
-  return /ptlogin2\.qq\.com/i.test(url) ||
-         /xui\.ptlogin2\.qq\.com/i.test(url) ||
-         /ssl\.ptlogin2\.qq\.com/i.test(url) ||
-         /login\.qq\.com/i.test(url) ||
-         /qlogin\.qq\.com/i.test(url);
 }
 
 // ========== 账号凭证（skey 直连，借鉴 GameLauncher） ==========
@@ -978,6 +1150,19 @@ async function captureCredentialFromGuest(guest, url) {
         httpOnly: !!c.httpOnly,
         expirationDate: c.expirationDate || 0
       }));
+    // uin 类 cookie 与本次抓到的 QQ 不一致 → 分区里残留了别的账号，丢弃
+    try {
+      for (let i = keep.length - 1; i >= 0; i--) {
+        const c = keep[i];
+        if (/^(uin|p_uin|ptui_loginuin|luin|pt2gguin)$/i.test(c.name)) {
+          const v = normalizeUinValue(c.value);
+          if (v && uin && v !== uin) {
+            log('[credential] 丢弃不匹配的 uin cookie: ' + c.name + '=' + c.value, 'WARN');
+            keep.splice(i, 1);
+          }
+        }
+      }
+    } catch (e) { /* ignore */ }
     // 防跨账号污染：同一个分区先后登过 A、B 时，A 的票据会残留在 cookie 里，
     // 被当成 B 的凭证存下来。skey / p_skey 只要值属于其他账号、又不是本次抓到的 skey，就丢弃。
     try {
@@ -1071,6 +1256,7 @@ ipcMain.handle('apply-credential', async (event, partition, cred) => {
   const ses = require('electron').session.fromPartition(partition);
   // 没有真实到期时间就写成会话 cookie，不再伪造 7 天
   const expSec = cred.expires_at ? Math.round(new Date(cred.expires_at).getTime() / 1000) : 0;
+  const expectedUin = normalizeUinValue(cred.uin);
   const list = Array.isArray(cred.cookies) ? cred.cookies : [];
   let written = 0;
   let hasSkeyOnHuoying = false;
@@ -1078,6 +1264,12 @@ ipcMain.handle('apply-credential', async (event, partition, cred) => {
   let hasPt2gguin = false;
   for (const c of list) {
     if (!c || !c.name || !c.value) continue;
+    // 分区可能残留别的账号：skey/uin 只认凭证自己的值，不把旧票据写回去
+    if (c.name === 'skey' && cred.skey && c.value !== cred.skey) continue;
+    if (/^(uin|p_uin|ptui_loginuin|luin|pt2gguin)$/i.test(c.name)) {
+      const v = normalizeUinValue(c.value);
+      if (expectedUin && v && v !== expectedUin) continue;
+    }
     const domain = c.domain || '.huoying.qq.com';
     const url = /(^|\.)ptlogin2\.qq\.com$/i.test(domain) ? 'https://xui.ptlogin2.qq.com/' : 'https://game.huoying.qq.com/';
     const cookie = {
@@ -1094,8 +1286,11 @@ ipcMain.handle('apply-credential', async (event, partition, cred) => {
     try {
       await ses.cookies.set(cookie);
       written++;
-      if (c.name === 'skey' && /(^|\.)huoying\.qq\.com$/i.test(domain)) hasSkeyOnHuoying = true;
-      if (c.name === 'uin' && /(^|\.)huoying\.qq\.com$/i.test(domain)) hasUin = true;
+      if (c.name === 'skey' && /(^|\.)huoying\.qq\.com$/i.test(domain) &&
+        (!cred.skey || c.value === cred.skey)) hasSkeyOnHuoying = true;
+      if (c.name === 'uin' && /(^|\.)huoying\.qq\.com$/i.test(domain)) {
+        hasUin = !expectedUin || normalizeUinValue(c.value) === expectedUin;
+      }
       if (c.name === 'pt2gguin' && /(^|\.)ptlogin2\.qq\.com$/i.test(domain)) hasPt2gguin = true;
     } catch (e) { /* ignore */ }
   }
@@ -1121,6 +1316,22 @@ ipcMain.handle('apply-credential', async (event, partition, cred) => {
   }
   if (cred.uin && !hasPt2gguin) {
     await setCookie('https://xui.ptlogin2.qq.com/', '.ptlogin2.qq.com', 'pt2gguin', 'o' + String(cred.uin).padStart(10, '0'));
+  }
+  // 充值/支付页 SSO：游戏域名的 skey 不一定会带到 .qq.com，
+  // 补一份 .qq.com 的登录标记，减少 pay.qq.com 要求重新登录
+  if (cred.uin) {
+    const padded = String(cred.uin).padStart(10, '0');
+    const pick = (name) => {
+      const c = list.find((x) => x && x.name === name && x.value);
+      return c ? c.value : '';
+    };
+    const hasQq = (name) => list.some((x) => x && x.name === name && /(^|\.)qq\.com$/i.test(x.domain || ''));
+    if (!hasQq('pt2gguin')) await setCookie('https://qq.com/', '.qq.com', 'pt2gguin', pick('pt2gguin') || ('o' + padded));
+    if (!hasQq('uin')) await setCookie('https://qq.com/', '.qq.com', 'uin', pick('uin') || ('o0' + padded));
+    if (!hasQq('p_uin')) await setCookie('https://qq.com/', '.qq.com', 'p_uin', pick('p_uin') || ('o' + padded));
+    if (cred.skey && !hasQq('skey')) await setCookie('https://qq.com/', '.qq.com', 'skey', cred.skey);
+    const pSkey = pick('p_skey');
+    if (pSkey && !hasQq('p_skey')) await setCookie('https://qq.com/', '.qq.com', 'p_skey', pSkey);
   }
   log('[credential] 注入 cookie: ' + written + ' 条 → ' + partition);
   return written > 0;
@@ -1177,117 +1388,6 @@ ipcMain.handle('mark-credential-expired', (event, accountId, zoneId) => {
   return true;
 });
 
-function injectQuickLogin(webContents, qqNumber, password) {
-  const js = [
-    '(function() {',
-    '  var qqNum = ' + JSON.stringify(qqNumber) + ';',
-    '  var pwd = ' + JSON.stringify(password || '') + ';',
-    '',
-    '  function fillInput(doc, selector, value) {',
-    '    try {',
-    '      var input = doc.querySelector(selector);',
-    '      if (input && input.offsetParent !== null) {',
-    '        var nativeSetter = Object.getOwnPropertyDescriptor(',
-    '          window.HTMLInputElement.prototype, "value").set;',
-    '        nativeSetter.call(input, value);',
-    '        input.dispatchEvent(new Event("input", { bubbles: true }));',
-    '        input.dispatchEvent(new Event("change", { bubbles: true }));',
-    '        input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));',
-    '        return true;',
-    '      }',
-    '    } catch(e) {}',
-    '    return false;',
-    '  }',
-    '  function tryFillInputs(doc) {',
-    '    var qqSelectors = ["#u", "input[name=\\"u\\"]", "#qq_num",',
-    '      "input[placeholder*=\\"QQ\\"]", "input[placeholder*=\\"账号\\"]",',
-    '      "input[placeholder*=\\"号码\\"]", "input[placeholder*=\\"邮箱\\"]",',
-    '      "input[placeholder*=\\"email\\"]", "input[type=\\"email\\"]",',
-    '      "input[type=\\"text\\"]"];',
-    '    for (var i = 0; i < qqSelectors.length; i++) {',
-    '      if (fillInput(doc, qqSelectors[i], qqNum)) break;',
-    '    }',
-    '    if (pwd) {',
-    '      var pwdSelectors = ["#p", "input[name=\\"p\\"]",',
-    '        "input[type=\\"password\\"]", "input[placeholder*=\\"密码\\"]"];',
-    '      for (var i = 0; i < pwdSelectors.length; i++) {',
-    '        if (fillInput(doc, pwdSelectors[i], pwd)) break;',
-    '      }',
-    '    }',
-    '  }',
-    '  function searchAllFrames(win) {',
-    '    try { tryFillInputs(win.document); } catch(e) {}',
-    '    try {',
-    '      for (var i = 0; i < win.frames.length; i++) {',
-    '        try { searchAllFrames(win.frames[i]); } catch(e) {}',
-    '      }',
-    '    } catch(e) {}',
-    '  }',
-    '  searchAllFrames(window);',
-    '})()'
-  ].join('\n');
-  
-  webContents.executeJavaScript(js).catch(() => {});
-  log('自动填充账号: ' + qqNumber + (password ? ' +密码' : ''));
-}
-
-function setupAutoLogin(tabInfo) {
-  if (!tabInfo._pendingAccount) return;
-  
-  const maxAttempts = 30;
-  const intervalMs = 2000;
-  let attempts = 0;
-  
-  const tryInject = () => {
-    attempts++;
-    
-    if (!tabInfo._pendingAccount || !tabInfo.webContents) {
-      log('[AutoLogin] 停止自动登录尝试');
-      return;
-    }
-    
-    const url = tabInfo.webContents.getURL();
-    
-    if (isLoginPage(url)) {
-      log('[AutoLogin] 检测到登录页面，尝试注入: ' + url);
-      injectQuickLogin(tabInfo.webContents, tabInfo._pendingAccount.qq, tabInfo._pendingAccount.qqPwd);
-      
-      if (attempts >= maxAttempts) {
-        log('[AutoLogin] 达到最大尝试次数 (' + maxAttempts + ')');
-        tabInfo._pendingAccount = null;
-      }
-    }
-    
-    if (tabInfo._pendingAccount) {
-      setTimeout(tryInject, intervalMs);
-    }
-  };
-  
-  tryInject();
-  
-  tabInfo.webContents.on('did-navigate', () => {
-    if (tabInfo._pendingAccount) {
-      const url = tabInfo.webContents.getURL();
-      log('[AutoLogin] 页面导航: ' + url);
-      if (isLoginPage(url)) {
-        injectQuickLogin(tabInfo.webContents, tabInfo._pendingAccount.qq, tabInfo._pendingAccount.qqPwd);
-      }
-    }
-  });
-  
-  tabInfo.webContents.on('did-navigate-in-page', () => {
-    if (tabInfo._pendingAccount) {
-      injectQuickLogin(tabInfo.webContents, tabInfo._pendingAccount.qq, tabInfo._pendingAccount.qqPwd);
-    }
-  });
-  
-  tabInfo.webContents.on('did-stop-loading', () => {
-    if (tabInfo._pendingAccount) {
-      injectQuickLogin(tabInfo.webContents, tabInfo._pendingAccount.qq, tabInfo._pendingAccount.qqPwd);
-    }
-  });
-}
-
 // 1.14.0 一次性重置：把旧配置改写成默认值（保留 clientId，账号/凭证在加密的 accounts.dat）
 function resetSettingsIfNeeded() {
   try {
@@ -1310,14 +1410,11 @@ function loadConfig() {
       const data = fs.readFileSync(CONFIG_FILE, 'utf8');
       config = JSON.parse(data);
       currentTheme = normalizeTheme(config.theme);
-      currentSpeedRate = config.lastSpeed || 1;
+      currentSpeedRate = normalizeSpeedChoice(config.lastSpeed);
+      config.lastSpeed = currentSpeedRate;
       if (config.diskCache === undefined) config.diskCache = true;
       if (config.flashChoice === undefined) config.flashChoice = FLASH_DEFAULT_CHOICE;
-      if (config.renderSize === undefined) config.renderSize = '1920x1080';
-      else config.renderSize = normalizeRenderSize(config.renderSize);
       if (config.tabDisplayMode !== 'taskbar') config.tabDisplayMode = 'sidebar';
-      const uiScale = Number(config.uiScale);
-      config.uiScale = (uiScale >= 1 && uiScale <= 2) ? uiScale : 0;
       // 1.12.1 一次性迁移：所有用户（包括手动选过国内版 34 的）统一重置为国际版 32
       if (config.flashMigrated !== FLASH_MIGRATION_ID) {
         config.flashChoice = FLASH_DEFAULT_CHOICE;
@@ -1338,6 +1435,33 @@ function loadConfig() {
     config = Object.assign({}, config, { flashChoice: FLASH_DEFAULT_CHOICE, flashMigrated: FLASH_MIGRATION_ID });
     needSave = true;
   }
+  // 2.3.1 渲染配置迁移：老的 renderSize 语义已废弃
+  if (config.renderSizeMigrated !== RENDER_MIGRATION_ID) {
+    const m = /^(\d{3,4})x(\d{3,4})$/.exec(String(config.renderSize || ''));
+    if (m) config.renderWidth = normalizeRenderWidth(parseInt(m[1], 10));
+    config.renderSizeMigrated = RENDER_MIGRATION_ID;
+    needSave = true;
+    log('渲染配置已迁移为「16:9 固定分辨率」');
+  }
+  // 默认渲染分辨率调整为 1600×900：老配置里仍是 1920 的跟随一次（用户手动选过的其他档位不动）
+  if (config.renderDefault !== '2.3.1') {
+    if (config.renderWidth === 1920) config.renderWidth = 1600;
+    config.renderDefault = '2.3.1';
+    needSave = true;
+  }
+  config.renderWidth = normalizeRenderWidth(config.renderWidth);
+  config.gameOpacity = normalizeGameOpacity(config.gameOpacity);
+  // 界面缩放固定跟随系统 DPI（设置项已移除，不再读取旧的手动倍率）
+  config.uiScale = 0;
+  delete config.renderMode;
+  delete config.renderRatio;
+  delete config.renderSize;
+  delete config.fitLargeScreen;
+  delete config.renderAutoPick;
+
+  // 固定策略：游戏优先常开
+  config.highPriority = true;
+  config.uiScale = normalizeUiScale(config.uiScale);
   if (needSave) saveConfig();
 }
 
@@ -1354,7 +1478,7 @@ function saveConfig() {
 
 // ========== 卡死治理 / 诊断 ==========
 
-// 逐进程性能快照（perf.log 与卡死日志共用）
+// 逐进程性能快照（调试控制台 / 卡死日志共用）
 function collectPerf() {
   try {
     const metrics = app.getAppMetrics();
@@ -1381,18 +1505,16 @@ function perfSummary() {
   const render = SOFTWARE_RENDER ? 'software' : (EARLY_CONFIG.forceGpu !== false ? 'gpu-forced' : 'gpu-auto');
   return 'procs=' + p.count + ' rss=' + p.rss + 'MB ' + JSON.stringify(p.types) +
     ' render=' + render +
+    ' flash=' + (FLASH_VERSION || '?') +
     ' gameWindows=' + gameWindows.length +
     ' launcher=' + ((launcherWindow && !launcherWindow.isDestroyed()) ? 1 : 0) +
     (p.error ? ' metricsError=' + p.error : '');
 }
 
-// 卡死/恢复/崩溃事件：只写 perf.log（不受「性能诊断日志」开关影响）；
+// 卡死/恢复/崩溃事件：写入调试控制台（由控制台决定是否落盘）；
 // level 有值时同时写 launcher.log。
 function logPerfEvent(tag, detail, level) {
-  const line = '[' + new Date().toISOString() + '] [' + tag + '] ' + detail + '\n';
-  try {
-    fs.appendFileSync(path.join(app.getPath('userData'), 'perf.log'), line);
-  } catch (e) { /* ignore */ }
+  try { debugConsole.write('perf', level || 'INFO', '[' + tag + '] ' + detail); } catch (e) { /* ignore */ }
   if (level) log('[' + tag + '] ' + detail, level);
 }
 
@@ -1456,7 +1578,7 @@ function attachCrashRecovery(wc, label) {
         type: 'error',
         title: '游戏页面反复崩溃',
         message: '游戏页面连续崩溃，已停止自动恢复。',
-        detail: '请关闭其他多开窗口 / 标签页后重试；若仍崩溃，可在「设置 → 性能」里开启「软件渲染（兼容模式）」。',
+        detail: '请关闭其他多开窗口 / 标签页后重试；若仍崩溃，可在「设置 → 性能」里开启「兼容模式」。',
         buttons: ['知道了']
       }).catch(() => {});
       return;
@@ -1505,6 +1627,22 @@ const escapeInjectedUntil = new Map();
 function attachShortcuts(wc, win) {
   if (!wc || wc.isDestroyed()) return;
   wc.on('before-input-event', (event, input) => {
+    // Ctrl+方向键：←→ 调透明度，↑↓ 调变速（游戏内也生效）
+    if (input && input.type === 'keyDown' && input.control && !input.alt && !input.shift) {
+      const key = String(input.key || '');
+      if (key === 'ArrowLeft' || key === 'ArrowRight' || key === 'ArrowUp' || key === 'ArrowDown') {
+        if (!win || win.isDestroyed()) return;
+        if (!gameWindows.some((g) => g && g.win === win)) return;
+        try { event.preventDefault(); } catch (e) { /* ignore */ }
+        if (key === 'ArrowLeft' || key === 'ArrowRight') {
+          const cur = Math.round(normalizeGameOpacity(config.gameOpacity) * 100);
+          applyGameOpacity(cur + (key === 'ArrowRight' ? 5 : -5));
+        } else {
+          stepSpeed(key === 'ArrowUp' ? 1 : -1);
+        }
+        return;
+      }
+    }
     const action = matchShortcut(input);
     if (!action) return;
     // 主动注入给游戏页的 Esc 不再拦截，否则会无限转发
@@ -1563,8 +1701,11 @@ app.on('child-process-gone', (event, details) => {
   const reason = (details && details.reason) || 'unknown';
   const exitCode = details && details.exitCode;
   const isGpu = String(type).toUpperCase() === 'GPU';
+  // reason=killed 通常是我们主动清理 Flash 插件，不应打成崩溃吓人
+  const tag = reason === 'killed' ? 'EXIT' : 'CRASH';
 
-  logPerfEvent('CRASH', type + ' 进程退出 reason=' + reason + ' exitCode=' + exitCode, isGpu ? 'ERROR' : undefined);
+  logPerfEvent(tag, type + ' 进程退出 reason=' + reason + ' exitCode=' + exitCode,
+    isGpu && reason !== 'killed' ? 'ERROR' : undefined);
 
   if (!isGpu) return;
   if (reason === 'crashed' || reason === 'oom') {
@@ -1600,8 +1741,17 @@ function getThemeColors() {
 }
 
 // ========== 界面缩放（启动器/账号窗口，不影响游戏渲染） ==========
+// 0 = 自动（跟随系统 DPI / 屏宽）；其余为固定倍率。高分屏上选 100% 可完全避开系统放大。
 const UI_SCALE_STEPS = [1, 1.25, 1.5, 1.75, 2];
+const UI_SCALE_OPTIONS = [0, 1, 1.25, 1.5, 1.75, 2];
 let systemDpiCache = 0;
+
+function normalizeUiScale(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return 0;
+  if (n === 0) return 0;
+  return UI_SCALE_OPTIONS.indexOf(n) >= 0 ? n : 0;
+}
 
 function readSystemDpi() {
   if (systemDpiCache) return systemDpiCache;
@@ -1616,9 +1766,10 @@ function readSystemDpi() {
   return systemDpiCache;
 }
 
+
 function getUiScale() {
-  const fixed = Number(config.uiScale);
-  if (fixed >= 1 && fixed <= 2) return Math.min(2, Math.max(1, fixed));
+  const fixed = normalizeUiScale(config.uiScale);
+  if (fixed >= 1) return fixed;
   const d = screen.getPrimaryDisplay();
   const width = (d.size && d.size.width) || (d.bounds && d.bounds.width) || 1920;
   const raw = Math.max(1, readSystemDpi() / 96, width / 1920);
@@ -1732,6 +1883,7 @@ function flushLogBuffer() {
 }
 
 function log(message, level = 'INFO') {
+  try { debugConsole.write('main', level, message); } catch (e) { /* ignore */ }
   if (level !== 'ERROR' && level !== 'WARN') return;
 
   const timestamp = new Date().toISOString();
@@ -1751,10 +1903,11 @@ const CLEANUP_CONFIG = {
   maxLogSize: 1024 * 1024 * 5,
   // 日志保留天数
   logRetainDays: 7,
-  // 缓存保留天数
-  cacheRetainDays: 3,
-  // 单次清理最大文件数
-  maxFilesPerCleanup: 500,
+  // 会话分区（Partitions/）保留天数：目录里是 cookie / 登录态，
+  // 已保存账号的分区始终跳过，其余分区才按这个天数清理
+  partitionRetainDays: 90,
+  // 默认会话 Local Storage 保留天数
+  localStorageRetainDays: 30,
   // 抓包缓存（captures/）：每次开抓包都会新增 netlog，单个可达数百 MB
   captureKeepFiles: 3,                        // 最新保留份数（netlog / jsonl 分别算）
   captureKeepDays: 7,                         // 超过天数删除
@@ -1952,9 +2105,25 @@ function cleanupElectronCache() {
   }
 }
 
+// 已保存账号的 QQ 集合（用于保护对应分区，避免清理把登录态删掉）
+function savedAccountQqSet() {
+  const set = new Set();
+  (accounts || []).forEach((a) => {
+    const qq = String((a && a.qq) || '').replace(/\D/g, '');
+    if (qq) set.add(qq);
+  });
+  return set;
+}
+
+// 从分区目录名里取归属 QQ（Electron 把 persist:qq-123456 落盘为 qq-123456）
+function partitionOwnerQq(name) {
+  const m = /(?:^|[^0-9])(\d{5,12})(?:[^0-9]|$)/.exec(String(name || ''));
+  return m ? m[1] : '';
+}
+
 /**
  * 清理未使用的 persist session 分区数据
- * 只保留当前活跃的 session，清理过期的
+ * 已保存账号的分区（登录态载体）永不自动删除；其余按 partitionRetainDays 清理
  */
 function cleanupUnusedSessions() {
   const userDataPath = app.getPath('userData');
@@ -1963,24 +2132,28 @@ function cleanupUnusedSessions() {
   if (!fs.existsSync(partitionsDir)) return;
 
   try {
+    const savedQq = savedAccountQqSet();
     const entries = fs.readdirSync(partitionsDir);
     let cleanedCount = 0;
 
     for (const entry of entries) {
       const partitionPath = path.join(partitionsDir, entry);
-      const stat = fs.statSync(partitionPath);
+      let stat;
+      try { stat = fs.statSync(partitionPath); } catch (e) { continue; }
 
       if (!stat.isDirectory()) continue;
 
-      // 只清理过期的 session 分区（超过保留期）
-      if (isExpired(partitionPath, CLEANUP_CONFIG.cacheRetainDays)) {
+      const owner = partitionOwnerQq(entry);
+      if (owner && savedQq.has(owner)) continue;
+
+      if (isExpired(partitionPath, CLEANUP_CONFIG.partitionRetainDays)) {
         safeRemoveDir(partitionPath);
         cleanedCount++;
       }
     }
 
     if (cleanedCount > 0) {
-      log(`清理过期 Session 分区: ${cleanedCount} 个`, 'INFO');
+      log(`清理过期 Session 分区: ${cleanedCount} 个（已保存账号的分区保留）`, 'WARN');
     }
   } catch (e) {
     console.error('清理 session 失败:', e);
@@ -1989,28 +2162,27 @@ function cleanupUnusedSessions() {
 
 /**
  * 清理更新下载的临时文件
+ * 只处理 pending 目录内过期的安装包，不碰 userData 根目录
  */
 function cleanupUpdateTempFiles() {
-  const userDataPath = app.getPath('userData');
-  const pendingUpdateDir = path.join(userDataPath, 'pending');
+  const pendingUpdateDir = path.join(app.getPath('userData'), 'pending');
+  if (!fs.existsSync(pendingUpdateDir)) return;
 
-  if (fs.existsSync(pendingUpdateDir)) {
-    safeRemoveDir(pendingUpdateDir);
-    log('清理更新临时文件', 'INFO');
-  }
-
-  // 清理可能残留的更新包
+  let removed = 0;
   try {
-    const entries = fs.readdirSync(userDataPath);
-    for (const entry of entries) {
-      if (entry.endsWith('.exe') || entry.endsWith('.zip') || entry.endsWith('.7z')) {
-        const filePath = path.join(userDataPath, entry);
-        if (isExpired(filePath, 1)) {
-          safeRemoveFile(filePath);
-        }
-      }
+    for (const entry of fs.readdirSync(pendingUpdateDir)) {
+      if (!/\.(exe|zip|7z)$/i.test(entry)) continue;
+      const filePath = path.join(pendingUpdateDir, entry);
+      try {
+        if (!fs.statSync(filePath).isFile()) continue;
+        if (!isExpired(filePath, 7)) continue;
+        fs.unlinkSync(filePath);
+        removed++;
+      } catch (e) { /* 被占用等情况，跳过 */ }
     }
-  } catch (e) {}
+  } catch (e) { /* ignore */ }
+
+  if (removed > 0) log('清理更新临时文件: ' + removed + ' 个', 'INFO');
 }
 
 /**
@@ -2026,7 +2198,7 @@ function cleanupLocalStorage() {
     const entries = fs.readdirSync(localStorageDir);
     for (const entry of entries) {
       const entryPath = path.join(localStorageDir, entry);
-      if (isExpired(entryPath, CLEANUP_CONFIG.cacheRetainDays)) {
+      if (isExpired(entryPath, CLEANUP_CONFIG.localStorageRetainDays)) {
         const stat = fs.statSync(entryPath);
         if (stat.isDirectory()) {
           safeRemoveDir(entryPath);
@@ -2224,6 +2396,29 @@ function setSpeedRate(rate) {
   log(`变速率已设置为: ${rate}x`);
 }
 
+// 变速档位：只保留 UI 提供的 6 档（旧的 20x 归到 10x）
+const SPEED_STEPS = [0.5, 1, 2, 4, 6, 10];
+function normalizeSpeedChoice(v) {
+  const n = Number(v);
+  if (SPEED_STEPS.indexOf(n) >= 0) return n;
+  return n > 10 ? 10 : 1;
+}
+function stepSpeed(dir) {
+  const cur = Number(currentSpeedRate) || 1;
+  let idx = SPEED_STEPS.findIndex((x) => Math.abs(x - cur) < 1e-6);
+  if (idx < 0) {
+    idx = SPEED_STEPS.findIndex((x) => x >= cur);
+    if (idx < 0) idx = SPEED_STEPS.length - 1;
+  }
+  const next = SPEED_STEPS[Math.max(0, Math.min(SPEED_STEPS.length - 1, idx + dir))];
+  if (Math.abs(next - cur) < 1e-6) return;
+  setSpeedRate(next);
+  gameWindows.forEach((gw) => {
+    if (!gw || !gameWinAlive(gw.win)) return;
+    try { gw.win.webContents.send('speed-update', next); } catch (e) { /* ignore */ }
+  });
+}
+
 function getAllRelevantChildPids() {
   try {
     // 只扫描 Flash 插件进程。游戏渲染进程在各自 dom-ready 时按 PID 直注，
@@ -2327,7 +2522,31 @@ if (FLASH_PATH) {
 app.commandLine.appendSwitch('ppapi-flash-Allow-Windows-Sandbox', 'true');
 
 app.commandLine.appendSwitch('allow-running-insecure-content');
-app.commandLine.appendSwitch('ignore-certificate-errors');
+
+// 证书校验：不再全局忽略（ignore-certificate-errors 会连更新源一起放开，
+// 攻击者可自签证书冒充 S4/COS/GitHub → 替换安装包）。只对游戏必需的域名放行。
+// 调试控制台出现 [cert] 拒绝 <host> 时，确认后把域名加进 CERT_ALLOWED_HOSTS。
+const CERT_ALLOWED_HOSTS = ['.qq.com', '.gtimg.cn', '.qpic.cn'];
+const certRejectedHosts = new Set();
+function isCertAllowedHost(host) {
+  const h = String(host || '').toLowerCase();
+  if (!h) return false;
+  return CERT_ALLOWED_HOSTS.some((suffix) => h === suffix.slice(1) || h.endsWith(suffix));
+}
+app.on('certificate-error', (event, wc, url, error, certificate, callback) => {
+  let host = '';
+  try { host = new URL(url).hostname; } catch (e) { /* ignore */ }
+  if (isCertAllowedHost(host)) {
+    event.preventDefault();
+    callback(true);
+    return;
+  }
+  if (host && !certRejectedHosts.has(host)) {
+    certRejectedHosts.add(host);
+    log('[cert] 拒绝 ' + host + ' (' + error + ')', 'WARN');
+  }
+  callback(false);
+});
 
 // 去掉 UA 里的 Electron 标记：QQ 的 qqgame app_frame 入口会对「带 Electron 且无 Referer」的请求直接 403。
 // 内核仍是 Chromium 87，所以 UA 里的版本号保持一致，不影响页面特性判断。
@@ -2342,9 +2561,31 @@ if (SOFTWARE_RENDER) {
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('disable-gpu-compositing');
 } else if (EARLY_CONFIG.forceGpu !== false) {
+  // GPU 加速开关（与 GameLauncher 对齐）：双显卡机器优先独显，并显式打开光栅化/合成/视频硬解。
+  // 关掉「强制启用 GPU」时这一组整体不生效，保留给驱动有问题的机器作退路。
   app.commandLine.appendSwitch('ignore-gpu-blacklist');
+  app.commandLine.appendSwitch('ignore-gpu-blocklist');
+  app.commandLine.appendSwitch('enable-gpu-rasterization');
+  app.commandLine.appendSwitch('enable-accelerated-video');
+  app.commandLine.appendSwitch('enable-gpu-compositing');
+  // 避免 Flash 的 3D 内容回退到软件渲染
+  app.commandLine.appendSwitch('disable-flash-3d-software-renderer');
+  if (process.platform === 'win32') {
+    // Windows：请求高性能 GPU（独显），混合显卡笔记本上影响明显
+    app.commandLine.appendSwitch('force_high_performance_gpu');
+  }
 }
 app.commandLine.appendSwitch('no-sandbox');
+
+// 关掉与游戏无关的后台维护任务，减少持续 CPU / IO / 网络噪声
+app.commandLine.appendSwitch('disable-background-networking');
+app.commandLine.appendSwitch('disable-breakpad');
+app.commandLine.appendSwitch('disable-component-update');
+app.commandLine.appendSwitch('disable-default-apps');
+app.commandLine.appendSwitch('disable-extensions');
+app.commandLine.appendSwitch('disable-sync');
+app.commandLine.appendSwitch('metrics-recording-only');
+app.commandLine.appendSwitch('no-first-run');
 
 // 性能：禁止后台节流（保证多开时后台游戏照常运行）
 app.commandLine.appendSwitch('disable-background-timer-throttling');
@@ -2356,7 +2597,6 @@ app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 //     这两个会让合成器不锁帧、不等垂直同步，CPU/GPU 持续满转 → 发热降频 → 越玩越卡
 
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
-app.commandLine.appendSwitch('high-dpi-support', '1');
 app.commandLine.appendSwitch('force-device-scale-factor', '1');
 app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity,CalculateNativeWinOcclusion');
 
@@ -2520,6 +2760,8 @@ function createLauncherWindow() {
   }
   .settings-btn:hover { background:var(--hover); color:var(--accent); }
   .ver { font-size:11px; color:var(--sub); }
+  .about-link { color:var(--accent); cursor:pointer; text-decoration:underline; font-size:11px; }
+  .about-link:hover { opacity:.75; }
   /* 设置面板 */
   .sheet-mask {
     position:fixed; inset:0; z-index:30; background:rgba(0,0,0,.28);
@@ -2566,6 +2808,8 @@ function createLauncherWindow() {
   .sheet-body::-webkit-scrollbar-button { display:none; width:0; height:0; }
   .sheet-body::-webkit-scrollbar-corner { background:transparent; }
   .sec-title { font-size:11.5px; color:var(--sub); margin:12px 0 8px; font-weight:600; }
+  .sec-title:first-child { margin-top:0; }
+  .field-label { font-size:11.5px; font-weight:600; color:var(--sub); margin:10px 0 6px; }
   .theme-grid { display:grid; grid-template-columns:repeat(5, 1fr); gap:8px; }
   .theme-card {
     height:46px; border-radius:12px; cursor:pointer; position:relative;
@@ -2658,6 +2902,7 @@ function createLauncherWindow() {
       <span class="tb-title">火影忍者启动器</span>
     </div>
     <div class="tb-actions">
+      <button class="tb-btn" id="btnDebug" title="调试控制台">🐞</button>
       <button class="tb-btn" id="btnMin" title="最小化">&#8211;</button>
       <button class="tb-btn tb-close" id="btnClose" title="关闭">&#10005;</button>
     </div>
@@ -2693,7 +2938,7 @@ function createLauncherWindow() {
 
   <footer class="bottombar">
     <button class="settings-btn" id="btnSettings">&#9881; 设置</button>
-    <span class="ver">v${CURRENT_VERSION}</span>
+    <span class="ver">v${CURRENT_VERSION} · <span class="about-link" id="aboutLink">关于</span></span>
   </footer>
 
   <div class="sheet-mask" id="sheetMask"></div>
@@ -2705,80 +2950,44 @@ function createLauncherWindow() {
     <div class="sheet-body">
       <div class="sec-title">主题</div>
       <div class="theme-grid" id="themeGrid"></div>
-      <div class="sec-title">Flash 版本</div>
+
+      <div class="sec-title">游戏</div>
+      <div class="field-label">Flash 版本</div>
       <div class="sel-row">
         <select class="sel" id="flashSelect" onchange="changeFlash(this.value)">
-          <option value="system">内置国内版 34.0.0.376（纯净版，默认）</option>
-          <option value="bundled">内置国际版 32.0.0.344</option>
+          <option value="system">国内版 34.0.0.376（默认）</option>
+          <option value="bundled">国际版 32.0.0.344</option>
         </select>
         <button class="info-btn" onclick="openHelp('flash')" title="Flash 版本说明">说明</button>
       </div>
-      <div class="sec-title">抓包模式</div>
-      <div class="sel-row">
-        <select class="sel" id="captureModeSel" onchange="changeCaptureMode(this.value)">
-          <option value="off">关闭</option>
-          <option value="stats">组织统计（生成 Excel）</option>
-          <option value="full">全量抓包（导出原始文件）</option>
-          <option value="quiz">题库抓包（忍者检测）</option>
-          <option value="miao">题库抓包（喵问答）</option>
-        </select>
-        <button class="info-btn" onclick="openHelp('capture')" title="抓包模式说明">说明</button>
-      </div>
-      <div class="row-hint" style="margin-top:6px">切换后需重启应用生效</div>
-
-      <div class="sec-title">游戏画面</div>
-      <div class="sel-row">
-        <select class="sel" id="qualitySel" onchange="changeFlashQuality(this.value)">
-          <option value="high">高（默认，抗锯齿最平滑）</option>
-          <option value="medium">中（画质与性能平衡）</option>
-          <option value="low">低（关闭抗锯齿，最省性能）</option>
-        </select>
-        <button class="info-btn" onclick="openHelp('quality')" title="游戏画面画质说明">说明</button>
-      </div>
-      <div class="row-hint" style="margin-top:6px">新开游戏窗口/标签生效；后台标签始终用低画质</div>
-
-      <div class="sec-title">游戏入口</div>
+      <div class="field-label">游戏入口</div>
       <div class="sel-row">
         <select class="sel" id="gameEntrySel" onchange="changeGameEntry(this.value)">
-          <option value="qqgame">QQ游戏大厅入口（默认）</option>
-          <option value="official">官网入口</option>
+          <option value="qqgame">QQ游戏大厅（默认）</option>
+          <option value="official">官网</option>
         </select>
         <button class="info-btn" onclick="openHelp('gameEntry')" title="游戏入口说明">说明</button>
       </div>
-      <div class="row-hint" style="margin-top:6px">新开游戏窗口生效；两种入口登录页不同</div>
 
-      <div class="row">
-        <span class="row-label">大屏适配<span class="row-hint">按窗口等比放大游戏，2K/4K 全屏不留黑边</span></span>
-        <label class="switch">
-          <input type="checkbox" id="fitScreenChk" onchange="toggleFitScreen(this.checked)">
-          <span class="track"></span>
-        </label>
-      </div>
-
-      <div class="row">
-        <span class="row-label">性能模式<span class="row-hint">大屏适配开启时生效；1920 清晰，其余按屏幕比例降宽，越低越流畅但字越软</span></span>
-        <select class="sel" id="renderSizeSel" style="width:150px; flex:0 0 150px;" onchange="changeRenderSize(this.value)">
-          <option value="1920x1080">1920×1080 清晰</option>
-          <option value="1600x900">1600×900 平衡</option>
-          <option value="1366x768">1366×768 流畅</option>
-          <option value="1280x720">1280×720 极速</option>
+      <div class="sec-title">画面</div>
+      <div class="field-label">画面画质</div>
+      <div class="sel-row">
+        <select class="sel" id="qualitySel" onchange="changeFlashQuality(this.value)">
+          <option value="high">高（默认）</option>
+          <option value="medium">中</option>
+          <option value="low">低</option>
         </select>
+        <button class="info-btn" onclick="openHelp('quality')" title="游戏画面画质说明">说明</button>
       </div>
-
-      <div class="row">
-        <span class="row-label">界面缩放<span class="row-hint">启动器与账号窗口大小；自动按屏幕分辨率/系统缩放计算</span></span>
-        <select class="sel" id="uiScaleSel" style="width:110px; flex:0 0 110px;" onchange="changeUiScale(this.value)">
-          <option value="0">自动</option>
-          <option value="1">100%</option>
-          <option value="1.25">125%</option>
-          <option value="1.5">150%</option>
-          <option value="2">200%</option>
-        </select>
+      <div class="field-label">渲染分辨率</div>
+      <div class="sel-row">
+        <select class="sel" id="renderModeSel" onchange="changeRenderMode(this.value)"></select>
+        <button class="info-btn" onclick="openHelp('render')" title="渲染分辨率说明">说明</button>
       </div>
 
       <div class="sec-title">性能</div>
       <div class="row">
-        <span class="row-label">强制启用 GPU<span class="row-hint">可能花屏/掉帧，切换后需重启</span></span>
+        <span class="row-label">强制启用 GPU</span>
         <button class="info-btn" onclick="openHelp('gpu')" title="强制启用 GPU 说明">说明</button>
         <label class="switch">
           <input type="checkbox" id="gpuChk" onchange="toggleForceGpu(this.checked)">
@@ -2786,26 +2995,25 @@ function createLauncherWindow() {
         </label>
       </div>
       <div class="row">
-        <span class="row-label">游戏优先<span class="row-hint">启动器/游戏/Flash 进程使用高优先级（非实时）</span></span>
-        <label class="switch">
-          <input type="checkbox" id="priorityChk" onchange="toggleHighPriority(this.checked)">
-          <span class="track"></span>
-        </label>
-      </div>
-      <div class="row">
-        <span class="row-label">性能诊断日志<span class="row-hint">每 60 秒记录一次进程/内存到 perf.log</span></span>
-        <label class="switch">
-          <input type="checkbox" id="perfChk" onchange="togglePerfDiag(this.checked)">
-          <span class="track"></span>
-        </label>
-      </div>
-      <div class="row">
-        <span class="row-label">软件渲染（兼容模式）<span class="row-hint">关闭硬件加速；更稳但更吃 CPU，切换后需重启</span></span>
-        <button class="info-btn" onclick="openHelp('software')" title="软件渲染说明">说明</button>
+        <span class="row-label">兼容模式</span>
+        <button class="info-btn" onclick="openHelp('software')" title="兼容模式说明">说明</button>
         <label class="switch">
           <input type="checkbox" id="swChk" onchange="toggleSoftwareRender(this.checked)">
           <span class="track"></span>
         </label>
+      </div>
+
+      <div class="sec-title">抓包</div>
+      <div class="sel-row">
+        <select class="sel" id="captureModeSel" onchange="changeCaptureMode(this.value)">
+          <option value="off">关闭</option>
+          <option value="stats">组织统计（Excel）</option>
+          <option value="full">全量抓包</option>
+          <option value="quiz">题库抓包（忍者检测）</option>
+          <option value="miao">题库抓包（喵问答）</option>
+          <option value="shop">商城特惠</option>
+        </select>
+        <button class="info-btn" onclick="openHelp('capture')" title="抓包模式说明">说明</button>
       </div>
       <div class="row">
         <span class="row-label">抓包缓存<span class="row-hint" id="capInfo">统计中…</span></span>
@@ -2834,13 +3042,10 @@ function createLauncherWindow() {
     function changeFlash(choice) { ipcRenderer.send('set-flash-choice', choice); }
     function changeCaptureMode(mode) { ipcRenderer.send('set-capture-mode', mode); }
     function toggleForceGpu(on) { ipcRenderer.send('set-force-gpu', on); }
-    function toggleHighPriority(on) { ipcRenderer.send('set-high-priority', on); }
-    function togglePerfDiag(on) { ipcRenderer.send('set-perf-diag', on); }
-    function toggleFitScreen(on) { ipcRenderer.send('set-fit-large-screen', on); }
     function changeGameEntry(v) { ipcRenderer.send('set-game-entry', v); }
     function changeFlashQuality(v) { ipcRenderer.send('set-flash-quality', v); }
-    function changeRenderSize(v) { ipcRenderer.send('set-render-size', v); }
-    function changeUiScale(v) { ipcRenderer.send('set-ui-scale', Number(v)); }
+    function changeRenderMode(v) { ipcRenderer.send('set-render-config', v); }
+    function changeUiScale(v) { ipcRenderer.send('set-ui-scale', v); }
     function toggleSoftwareRender(on) { ipcRenderer.send('set-software-render', on); }
     function refreshStorageInfo() { ipcRenderer.send('get-storage-info'); }
     function clearCaptures() { ipcRenderer.send('clear-captures'); }
@@ -2912,14 +3117,12 @@ function createLauncherWindow() {
       flash: {
         title: 'Flash 版本说明',
         html:
-          '<span class="h">内置国际版 32.0.0.344 · 默认</span>' +
-          '<p>Adobe 官方国际版，不依赖任何后台服务，进游戏最稳。版本较旧（国际版 32.0.0.371 之后的版本已被 Adobe 远程停用），个别新内容可能不兼容。</p>' +
-          '<span class="h">内置国内版 34.0.0.376（纯净版）</span>' +
-          '<p>由国内正式版 34 制作，已去除广告与检测组件，版本号与国内最新版一致。但部分机器会卡在进游戏，或提示「必要组件缺失 / 地区不相容」（国内 Flash 依赖 Flash Helper Service 后台组件）。</p>' +
+          '<span class="h">国内版 34.0.0.376（默认）</span>' +
+          '<p>去掉广告与检测组件的纯净版，版本较新；部分机器可能提示「必要组件缺失 / 地区不相容」。</p>' +
+          '<span class="h">国际版 32.0.0.344</span>' +
+          '<p>Adobe 官方国际版，不依赖后台服务，进游戏最稳；版本较旧，个别新内容可能不兼容。</p>' +
           '<span class="h">怎么选</span>' +
-          '<p>默认用国际版 32 即可，两个版本都已内置。只有遇到个别新内容不兼容时，再手动切到国内版 34。切换后需重启启动器生效。</p>' +
-          '<span class="h">1.12.1 说明</span>' +
-          '<p>这次更新把所有用户的 Flash 统一重置为国际版 32（包括之前手动选过国内版 34 的），只重置一次；想继续用国内版 34 的，在这里重新选一次即可，以后不会再被改。</p>'
+          '<p>默认用国内版即可；遇到不兼容再切国际版。切换后需重启启动器生效。</p>'
       },
       capture: {
         title: '抓包模式说明',
@@ -2946,6 +3149,11 @@ function createLauncherWindow() {
           '<p>重启后参加「喵问答」活动，把题答完。退出后在桌面「火影题库 / 喵问答_时间」生成 questions.json 和 images 文件夹。</p>' +
           '<p>每条记录含：题干、四个选项、正确答案（答对才有）、我选的选项、活动加成排除的错误选项、配图路径。带图的题会把图片一起存到 images 里，文件名形如 03_10082.png（题号_资源ID）。</p>' +
           '<p>协议本身不传正确答案（服务端判分），所以答错的题 answer 为空，但 bonusRemoved 一定是错误选项，可用排除法；同一道题多答几轮即可逐步补齐答案。</p>' +
+          '<span class="h">商城特惠（导出 JSON + 图片）</span>' +
+          '<p>重启后进入游戏，打开「商城特惠」面板，<b>把 16 张商品卡片上下滚动一遍</b>（滚动到哪张，游戏才会去下载哪张的图标），然后关闭游戏窗口、走托盘「退出」。</p>' +
+          '<p>导出到桌面「火影商城特惠 / 商城特惠_时间」，含：商城特惠.json（活动时间、当日窗口、每件商品的每日限购 / 已购 / 剩余 / 折扣价 / 时间范围）、商城特惠.txt（同内容的可读表格，所有时间都带星期）、images 文件夹（商品图标）。</p>' +
+          '<p>时间一律按服务器时间（UTC+8）换算，不受本机时区影响；每日限购每天 05:00 刷新，当日窗口即「当天 05:00 ~ 次日 04:59:59」。</p>' +
+          '<p>物品图标只能来自游戏真实请求，没法按 ID 拼地址；没滚到的卡片会显示为缺失，重新抓一次并把卡片滚全即可。</p>' +
           '<span class="h">通用</span>' +
           '<p>切换模式后需重启启动器生效；导出必须走托盘「退出」，直接关窗口会导致数据写不完、导不出。</p>'
       },
@@ -2988,12 +3196,12 @@ function createLauncherWindow() {
           '<span class="h">什么时候开 / 关</span>' +
           '<p>默认开着就行。显卡驱动较新、以前没出现过花屏 / 闪烁 → 保持开启。</p>' +
           '<p>出现花屏、闪烁、黑屏、画面撕裂，或启动即崩溃 → 关掉再试。切换后需重启启动器生效。</p>' +
-          '<p>如果关掉后仍然卡死，说明驱动本身有问题，请改用下面的「软件渲染（兼容模式）」。</p>'
+          '<p>如果关掉后仍然卡死，说明驱动本身有问题，请改用下面的「兼容模式」。</p>'
       },
       software: {
-        title: '软件渲染（兼容模式）说明',
+        title: '兼容模式说明',
         html:
-          '<p>开启后启动参数会加 <code>--disable-gpu</code> 与 <code>--disable-gpu-compositing</code>，完全不走显卡渲染。</p>' +
+          '<p>兼容模式即软件渲染：开启后启动参数会加 <code>--disable-gpu</code> 与 <code>--disable-gpu-compositing</code>，完全不走显卡渲染。</p>' +
           '<span class="h">什么时候用</span>' +
           '<p>游戏窗口在打开面板、进入战斗、战斗结算时<strong>直接卡死</strong>，并且「强制启用 GPU」已经关闭也没用 —— 说明显卡驱动本身有问题，这时开软件渲染最有效。</p>' +
           '<span class="h">优点 / 缺点</span>' +
@@ -3002,6 +3210,39 @@ function createLauncherWindow() {
           '<span class="h">注意</span>' +
           '<p>开启后「强制启用 GPU」不起作用（软件渲染优先）。切换后需重启启动器生效。</p>' +
           '<p>如果只是偶尔卡一下、能自己恢复，不建议开这个。</p>'
+      },
+      render: {
+        title: '渲染分辨率说明',
+        html:
+          '<p>决定游戏内部按多少像素渲染，再铺满窗口。越高越清晰，越低越省性能。</p>' +
+          '<span class="h">默认 1600×900</span>' +
+          '<p>清晰度和性能比较均衡；配置够就直接选 1920×1080。</p>' +
+          '<span class="h">最大化 / 全屏</span>' +
+          '<p>缩放倍率会自动取 1/8 步进（1.125 / 1.25 / 1.375 / 1.5…），让地图方块边界落在整数像素上，避免出现细黑线；同时逻辑视口不会超过所选分辨率，不会渲染出多余的黑边。</p>' +
+          '<span class="h">注意</span>' +
+          '<p>只改渲染像素，不改窗口大小；窗口大小可以自由拖动。</p>'
+      },
+      uiScale: {
+        title: '界面缩放说明',
+        html:
+          '<p>只影响启动器窗口和游戏窗口的工具栏 / 侧栏 / 弹窗，不影响游戏画面本身。</p>' +
+          '<span class="h">自动</span>' +
+          '<p>跟随系统 DPI 缩放。</p>' +
+          '<span class="h">固定百分比</span>' +
+          '<p>高分屏上如果系统放大让界面显得太大，选 100% 可以完全避开系统放大（窗口会偏小）。</p>'
+      },
+      about: {
+        title: '关于',
+        html:
+          '<span class="h">作者</span>' +
+          '<p>lijin · QQ 3025863517 · 邮箱 a3025863517@163.com</p>' +
+          '<p>Q 群：489455643</p>' +
+          '<span class="h">关于启动器</span>' +
+          '<p>火影忍者 Online 页游桌面启动器，开源项目，基于 Electron + PPAPI Flash。</p>' +
+          '<span class="h">主要亮点</span>' +
+          '<p>多标签 / 多账号、一键启动、凭证自动登录与本地加密、画质与分辨率调节、变速、窗口透明度、老板键、绿色免安装。</p>' +
+          '<span class="h">开源与署名</span>' +
+          '<p>本项目开源，欢迎学习与二次开发；修改或分发时请保留原作者 lijin 及本关于信息。</p>'
       },
     };
 
@@ -3026,9 +3267,11 @@ function createLauncherWindow() {
     });
 
 
+    document.getElementById('btnDebug').onclick = function () { ipcRenderer.send('open-debug-console'); };
     document.getElementById('btnMin').onclick = function () { ipcRenderer.send('launcher-minimize'); };
     document.getElementById('btnClose').onclick = function () { ipcRenderer.send('launcher-close'); };
     document.getElementById('btnSettings').onclick = openSheet;
+    document.getElementById('aboutLink').onclick = function () { openHelp('about'); };
     document.getElementById('btnSheetClose').onclick = closeSheet;
     mask.onclick = closeSheet;
 
@@ -3053,14 +3296,6 @@ function createLauncherWindow() {
       const c = document.getElementById('gpuChk');
       if (c) c.checked = !!on;
     });
-    ipcRenderer.on('high-priority-state', function (e, on) {
-      const c = document.getElementById('priorityChk');
-      if (c) c.checked = !!on;
-    });
-    ipcRenderer.on('perf-diag-state', function (e, on) {
-      const c = document.getElementById('perfChk');
-      if (c) c.checked = !!on;
-    });
     ipcRenderer.on('game-entry-state', function (e, v) {
       const s = document.getElementById('gameEntrySel');
       if (s) s.value = v || 'official';
@@ -3069,19 +3304,32 @@ function createLauncherWindow() {
       const s = document.getElementById('qualitySel');
       if (s) s.value = (v === 'low' || v === 'medium') ? v : 'high';
     });
-    ipcRenderer.on('render-size-state', function (e, v) {
-      const s = document.getElementById('renderSizeSel');
-      if (s) s.value = ['1920x1080', '1600x900', '1366x768', '1280x720'].indexOf(v) >= 0 ? v : '1920x1080';
+    ipcRenderer.on('render-config-state', function (e, cfg) {
+      const s = document.getElementById('renderModeSel');
+      if (!s || !cfg) return;
+      const opts = cfg.options || [];
+      s.innerHTML = '';
+      const g = document.createElement('optgroup');
+      g.label = '16:9 · 越高越清晰，越低越省性能';
+      opts.forEach(function (o) {
+        const op = document.createElement('option');
+        op.value = 'fixed:' + o.w + 'x' + o.h;
+        op.textContent = o.w + '×' + o.h;
+        g.appendChild(op);
+      });
+      s.appendChild(g);
+      const value = 'fixed:' + cfg.width + 'x' + cfg.height;
+      s.value = value;
+      if (s.value !== value && opts.length) {
+        s.value = 'fixed:' + opts[0].w + 'x' + opts[0].h;
+      }
     });
     ipcRenderer.on('ui-scale-state', function (e, v) {
       const s = document.getElementById('uiScaleSel');
-      if (s) s.value = String(v || 0);
-    });
-    ipcRenderer.on('fit-large-screen-state', function (e, on) {
-      const c = document.getElementById('fitScreenChk');
-      if (c) c.checked = !!on;
-      const s = document.getElementById('renderSizeSel');
-      if (s) s.disabled = !on;
+      if (!s) return;
+      const val = String(v == null ? 0 : v);
+      s.value = val;
+      if (s.value !== val) s.value = '0';
     });
     ipcRenderer.on('software-render-state', function (e, on) {
       const c = document.getElementById('swChk');
@@ -3123,13 +3371,10 @@ function createLauncherWindow() {
     launcherWindow.webContents.send('flash-choice', config.flashChoice);
     launcherWindow.webContents.send('capture-mode-state', normalizeCaptureMode(config.captureMode));
     launcherWindow.webContents.send('force-gpu-state', config.forceGpu !== false);
-    launcherWindow.webContents.send('high-priority-state', config.highPriority !== false);
-    launcherWindow.webContents.send('perf-diag-state', !!config.perfDiag);
     launcherWindow.webContents.send('game-entry-state', normalizeGameEntry(config.gameEntry));
     launcherWindow.webContents.send('flash-quality-state', normalizeFlashQuality(config.flashQuality));
-    launcherWindow.webContents.send('fit-large-screen-state', config.fitLargeScreen !== false);
-    launcherWindow.webContents.send('render-size-state', normalizeRenderSize(config.renderSize));
-    launcherWindow.webContents.send('ui-scale-state', Number(config.uiScale) || 0);
+    launcherWindow.webContents.send('render-config-state', getRenderConfig());
+    launcherWindow.webContents.send('ui-scale-state', normalizeUiScale(config.uiScale));
     launcherWindow.webContents.send('software-render-state', !!config.softwareRender);
     // 窗口重建时补发在线人数，避免空白
     const lastOnline = online.getLast();
@@ -3155,6 +3400,37 @@ function showLauncherWindow() {
   }
   createLauncherWindow();
   return launcherWindow;
+}
+
+// 游戏窗口固定 16:9 普通窗口（约工作区 85% 宽，最大 1728），不跟着渲染分辨率变化。
+// 窗口内的游戏按所选逻辑分辨率渲染后铺满窗口（见 game.html computeRenderTarget）。
+function computeFixedContentSize(display) {
+  const d = display || screen.getPrimaryDisplay();
+  const wa = d.workAreaSize;
+  const maxH = Math.max(360, wa.height - 44);   // 44 = 工具栏
+  let w = Math.min(1728, Math.floor(wa.width * 0.85), Math.floor(maxH * 16 / 9));
+  w = Math.max(640, w);
+  let h = Math.round(w * 9 / 16);
+  return { w: w, h: Math.max(360, h) };
+}
+
+// 游戏区域宽高比（固定 16:9）
+const GAME_ASPECT = 9 / 16;
+
+// 拖拽缩放时按 16:9 修正（窗口高 = 游戏高 + 44 工具栏）
+function fitAspectBounds(bounds, edge, toolbar) {
+  const tb = typeof toolbar === 'number' ? toolbar : 44;
+  const vertical = edge === 'top' || edge === 'bottom';
+  let w = Math.max(640, bounds.width);
+  let h = Math.max(360, bounds.height - tb);
+  if (vertical) w = Math.round(h / GAME_ASPECT);
+  else h = Math.round(w * GAME_ASPECT);
+  w = Math.max(640, w);
+  h = Math.max(360, h);
+  const out = { x: bounds.x, y: bounds.y, width: w, height: h + tb };
+  if (String(edge).indexOf('left') >= 0) out.x = bounds.x + (bounds.width - w);
+  if (String(edge).indexOf('top') >= 0) out.y = bounds.y + (bounds.height - (h + tb));
+  return out;
 }
 
 function createGameWindow(url, gameName, account, opts) {
@@ -3188,11 +3464,19 @@ function createGameWindow(url, gameName, account, opts) {
   const { width, height } = primaryDisplay.workAreaSize;
   const toolbarHeight = 44;
 
-  const maxGameWidth = 1440;
-  const maxGameHeight = 810;
-
-  const gameWidth = Math.min(Math.floor(width * 0.95), maxGameWidth);
-  const gameHeight = Math.min(Math.floor(height * 0.95) - toolbarHeight, maxGameHeight);
+  let gameWidth;
+  let gameHeight;
+  if (plain) {
+    const maxGameWidth = 1440;
+    const maxGameHeight = 810;
+    gameWidth = Math.min(Math.floor(width * 0.95), maxGameWidth);
+    gameHeight = Math.min(Math.floor(height * 0.95) - toolbarHeight, maxGameHeight);
+  } else {
+    // 火影窗口固定 16:9 普通尺寸（约工作区 85% 宽，最大 1728），不会占满屏幕
+    const fixed = computeFixedContentSize(primaryDisplay);
+    gameWidth = fixed.w;
+    gameHeight = fixed.h;
+  }
   // 用主题底色，避免暗色主题下开窗瞬间闪白
   const gameTheme = THEMES[currentTheme] || THEMES.mint;
 
@@ -3215,10 +3499,14 @@ function createGameWindow(url, gameName, account, opts) {
     },
     show: false,
     fullscreenable: true,
-    simpleFullscreen: false
+    simpleFullscreen: false,
+    // 最大化 = 系统最大化（填满工作区、保留任务栏）；全屏 = F11 / 菜单，两者互不替代
+    maximizable: true
   });
 
   win.webContents.setZoomFactor(1.0);
+  // 窗口透明度（设置里调过就沿用）
+  try { win.setOpacity(normalizeGameOpacity(config.gameOpacity)); } catch (e) { /* ignore */ }
 
   win.setMenu(null);
   applyProcessPriority();
@@ -3238,7 +3526,7 @@ function createGameWindow(url, gameName, account, opts) {
   }, 5000);
 
   // 加载页面：火影用 game.html（带工具栏），其余（4399 等）用 browser.html（极简）
-  win.loadFile(plain ? 'browser.html' : 'game.html');
+  win.loadFile(plain ? 'src/ui/browser.html' : 'src/ui/game.html');
 
   // 卡死/崩溃看门狗：宿主页面 + 每个 webview 客进程
   // 同时统计「标签页数」用于在线人数：每附加一个 webview 算 1，销毁时减 1
@@ -3265,6 +3553,12 @@ function createGameWindow(url, gameName, account, opts) {
     attachFlashQualityPatch(guest);
     // 禁用捏合缩放；页面缩放/大屏适配由 game.html 统一处理，这里不要再锁缩放
     try { guest.setVisualZoomLevelLimits(1, 1); } catch (e) { /* ignore */ }
+    // 隐藏滚动条：滚动条会占掉视口宽度，导致 1920 逻辑视口被压缩、右侧露出空白
+    try {
+      guest.on('dom-ready', () => {
+        try { guest.insertCSS('::-webkit-scrollbar{display:none !important;width:0 !important;height:0 !important;}'); } catch (e) { /* ignore */ }
+      });
+    } catch (e) { /* ignore */ }
     guestWcs.push(guest);
     tabEntry.tabs++;
     trackGameContents(guest);
@@ -3272,6 +3566,12 @@ function createGameWindow(url, gameName, account, opts) {
     try {
       guest.on('did-finish-load', applyProcessPriority);
       guest.on('did-stop-loading', applyProcessPriority);
+    } catch (e) { /* ignore */ }
+    // 页面跳转时同步网址调试窗口里的 URL（含登录后的 zone 参数）
+    try {
+      const syncUrlTool = () => { try { urlTool.refreshContext(); } catch (e) { /* ignore */ } };
+      guest.on('did-navigate', syncUrlTool);
+      guest.on('did-navigate-in-page', syncUrlTool);
     } catch (e) { /* ignore */ }
     // 只有用户真的开了加速才注入；1x 不碰未签名 DLL，避免杀软误报和无谓攻击面
     try {
@@ -3296,41 +3596,60 @@ function createGameWindow(url, gameName, account, opts) {
   });
 
 
+  // 宿主页重载时 did-finish-load 会再次触发；game-info 只发一次，
+  // 否则 game.html 收到两次会重复建标签
+  let gameInfoSent = false;
   win.webContents.on('did-finish-load', () => {
-    // 发送游戏信息给页面
-    const gameInfo = {
-      name: gameName,
-      url: url
-    };
-    win.webContents.send('game-info', {
-      game: gameInfo,
-      accounts: plain ? [] : accounts,
-      account: plain ? null : account,
-      diskCache: config.diskCache !== false,
-      plain: plain,
-      windowSlot: windowSlot,
-      flashQuality: normalizeFlashQuality(config.flashQuality),
-      renderSize: normalizeRenderSize(config.renderSize),
-      tabDisplayMode: config.tabDisplayMode === 'taskbar' ? 'taskbar' : 'sidebar',
-      fitLargeScreen: config.fitLargeScreen !== false
-    });
+    if (!gameInfoSent) {
+      gameInfoSent = true;
+      // 发送游戏信息给页面
+      const gameInfo = {
+        name: gameName,
+        url: url
+      };
+      win.webContents.send('game-info', {
+        game: gameInfo,
+        accounts: plain ? [] : accounts,
+        account: plain ? null : account,
+        diskCache: config.diskCache !== false,
+        plain: plain,
+        windowSlot: windowSlot,
+        flashQuality: normalizeFlashQuality(config.flashQuality),
+        renderConfig: getRenderConfig(),
+        tabDisplayMode: config.tabDisplayMode === 'taskbar' ? 'taskbar' : 'sidebar',
+        uiScale: getUiScale(),
+        gameOpacity: normalizeGameOpacity(config.gameOpacity)
+      });
+    }
 
     // 发送当前配置
     // 下发当前主题颜色（game.html / browser.html 不再各自维护主题表）
     win.webContents.send('theme-update', getThemeColors());
     win.webContents.send('speed-update', currentSpeedRate);
     win.webContents.send('mute-update', isAudioMuted);
+    win.webContents.send('window-state', {
+      maximized: win.isMaximized(),
+      fullscreen: win.isFullScreen()
+    });
 
     log('游戏窗口加载完成');
   });
 
-  // 全屏状态变化 → 通知渲染层隐藏/显示顶部栏
-  win.on('enter-full-screen', () => {
-    if (!win.isDestroyed()) win.webContents.send('fullscreen-changed', true);
-  });
-  win.on('leave-full-screen', () => {
-    if (!win.isDestroyed()) win.webContents.send('fullscreen-changed', false);
-  });
+  // 窗口状态（最大化 / 全屏）→ 渲染层决定工具栏是否隐藏、最大化按钮图标
+  // 注意：enter/leave-full-screen 触发瞬间 isFullScreen() 可能还是旧值，必须用事件本身的状态
+  const sendWindowState = (fsOverride) => {
+    if (!win || win.isDestroyed()) return;
+    const fullscreen = (typeof fsOverride === 'boolean') ? fsOverride : win.isFullScreen();
+    win.webContents.send('fullscreen-changed', fullscreen);
+    win.webContents.send('window-state', {
+      maximized: win.isMaximized(),
+      fullscreen: fullscreen
+    });
+  };
+  win.on('enter-full-screen', () => sendWindowState(true));
+  win.on('leave-full-screen', () => sendWindowState(false));
+  win.on('maximize', () => sendWindowState());
+  win.on('unmaximize', () => sendWindowState());
 
 
   const ipcListeners = [];
@@ -3341,18 +3660,6 @@ function createGameWindow(url, gameName, account, opts) {
   };
 
   // 游戏窗口内的 IPC 处理
-  addListener('new-tab', (event) => {
-    // 游戏窗口自己处理
-  });
-
-  addListener('switch-tab', (event, index) => {
-    // 游戏窗口自己处理
-  });
-
-  addListener('close-tab', (event, index) => {
-    // 游戏窗口自己处理
-  });
-
   addListener('min-window', (event) => {
     const senderWin = BrowserWindow.fromWebContents(event.sender);
     if (senderWin === win && win && !win.isDestroyed()) {
@@ -3362,13 +3669,16 @@ function createGameWindow(url, gameName, account, opts) {
 
   addListener('max-window', (event) => {
     const senderWin = BrowserWindow.fromWebContents(event.sender);
-    if (senderWin === win && win && !win.isDestroyed()) {
-      if (win.isMaximized()) {
-        win.unmaximize();
-      } else {
-        win.maximize();
+    if (senderWin !== win || !win || win.isDestroyed()) return;
+    try {
+      // 全屏时点最大化：先退回窗口，再按普通最大化处理
+      if (win.isFullScreen()) {
+        win.setFullScreen(false);
+        return;
       }
-    }
+      if (win.isMaximized()) win.unmaximize();
+      else win.maximize();
+    } catch (e) { /* ignore */ }
   });
 
   addListener('close-window', (event) => {
@@ -3379,43 +3689,7 @@ function createGameWindow(url, gameName, account, opts) {
   });
 
   addListener('set-game-speed', (event, speed) => {
-    currentSpeedRate = speed;
-    config.lastSpeed = speed;
-    saveConfig();
-
-    if (fs.existsSync(speedctlPath)) {
-      updateNativeRate(speed);
-      injectIntoGameContents();
-      injectAllChildProcesses();
-      scheduleSpeedRescan();
-    }
-
-    log(`全局变速率已设置为: ${speed}x`);
-  });
-
-  addListener('toggle-mute', (event, muted) => {
-    const senderWin = BrowserWindow.fromWebContents(event.sender);
-    if (senderWin === win) {
-      isAudioMuted = muted;
-    }
-  });
-
-  addListener('toggle-sidebar', (event, visible) => {
-    // 侧边栏由 game.html 自己处理
-  });
-
-  addListener('show-modal', (event, show) => {
-    // 模态框由 game.html 自己处理
-  });
-
-  addListener('refresh-page', (event) => {
-    // 刷新由 game.html 自己 reload 当前标签完成。
-    // 这里不能再调 killFlashPluginProcesses()：它按进程类型匹配，会把所有窗口/标签的
-    // Flash 一起杀掉，导致其它账号全部重载。全局回收只在最后一个游戏窗口关闭时做。
-  });
-
-  addListener('clear-cache', (event) => {
-    // 由 game.html 处理
+    setSpeedRate(speed);
   });
 
   // 账号相关 IPC
@@ -3424,11 +3698,6 @@ function createGameWindow(url, gameName, account, opts) {
     if (senderWin === win) {
       senderWin.webContents.send('accounts-update', accounts);
     }
-  });
-
-  addListener('save-accounts-window', (event, accountList) => {
-    accounts = accountList || [];
-    saveAccounts();
   });
 
   addListener('launch-account-window', (event, payload) => {
@@ -3453,10 +3722,6 @@ function createGameWindow(url, gameName, account, opts) {
     }
   });
 
-  addListener('fill-account', (event, accountId) => {
-    // 由 game.html 处理
-  });
-
   addListener('get-config', (event, key) => {
     const senderWin = BrowserWindow.fromWebContents(event.sender);
     if (senderWin === win) {
@@ -3466,10 +3731,6 @@ function createGameWindow(url, gameName, account, opts) {
 
   addListener('set-config', (event, key, value) => {
     if (key === 'tabDisplayMode') value = value === 'taskbar' ? 'taskbar' : 'sidebar';
-    if (key === 'uiScale') {
-      const n = Number(value);
-      value = (n >= 1 && n <= 2) ? n : 0;
-    }
     config[key] = value;
     saveConfig();
   });
@@ -3507,70 +3768,26 @@ function createGameWindow(url, gameName, account, opts) {
   win.on('unmaximize', () => setTimeout(nudgeResize, 40));
   win.on('restore', () => setTimeout(nudgeResize, 40));
 
-  // 手动拖动缩放时保持游戏比例 16:9（1920×1080），与游戏舞台上限一致
-  const GAME_ASPECT = 1920 / 1080;
-  let lastResizeEdge = '';
-  let manualResizing = false;
-  let aspectApplying = false;
-
-  // 按最后拖动的边把窗口尺寸修正到游戏比例
-  const fitAspectBounds = (bounds, edge) => {
-    const vertical = edge === 'top' || edge === 'bottom';
-    let w = bounds.width;
-    let h = bounds.height - toolbarHeight;
-    if (vertical) w = Math.round(h * GAME_ASPECT);
-    else h = Math.round(w / GAME_ASPECT);
-    w = Math.max(820, w);
-    h = Math.max(461, h);
-    const out = { x: bounds.x, y: bounds.y, width: w, height: h + toolbarHeight };
-    if (edge.indexOf('left') >= 0) out.x = bounds.x + (bounds.width - w);
-    if (edge.indexOf('top') >= 0) out.y = bounds.y + (bounds.height - (h + toolbarHeight));
-    return out;
-  };
-
-  win.on('will-resize', (event, newBounds, details) => {
-    if (plain || !newBounds) return;
-    try {
-      event.preventDefault();
-      const edge = String((details && details.edge) || lastResizeEdge || '');
-      lastResizeEdge = edge;
-      manualResizing = true;
-      win.setBounds(fitAspectBounds(newBounds, edge), false);
-    } catch (e) { /* ignore */ }
-  });
-
-  // 松开鼠标的那一下不会再触发 will-resize，最后一次拖动的增量会原样留下。
-  // 等尺寸稳定后再按最后拖动的边补一次修正，否则边缘总会差最后一点。
-  const correctAspectAfterDrag = () => {
-    if (plain || !win || win.isDestroyed()) return;
-    if (aspectApplying) return;
-    if (win.isMaximized() || win.isFullScreen() || win.isMinimized()) return;
-    // 只修正手动拖边；系统贴边/程序化改尺寸不强行改比例
-    if (!manualResizing) return;
-    try {
-      const b = win.getBounds();
-      const fit = fitAspectBounds(b, lastResizeEdge);
-      const need = Math.abs(fit.width - b.width) > 1 || Math.abs(fit.height - b.height) > 1;
-      manualResizing = false;
-      if (!need) return;
-      aspectApplying = true;
-      win.setBounds(fit, false);
-      setTimeout(() => { aspectApplying = false; }, 150);
-    } catch (e) { /* ignore */ }
-  };
-  win.on('resized', () => setTimeout(correctAspectAfterDrag, 0));
-  let aspectTimer = null;
-  win.on('resize', () => {
-    if (aspectApplying) return;
-    if (aspectTimer) clearTimeout(aspectTimer);
-    aspectTimer = setTimeout(correctAspectAfterDrag, 120);
-  });
+  // 拖拽缩放锁定 16:9（窗口高 = 游戏高 + 44 工具栏）
+  if (!plain) {
+    let lastEdge = '';
+    win.on('will-resize', (event, newBounds, details) => {
+      if (!newBounds) return;
+      try {
+        event.preventDefault();
+        const edge = String((details && details.edge) || lastEdge || '');
+        lastEdge = edge;
+        win.setBounds(fitAspectBounds(newBounds, edge, toolbarHeight), false);
+      } catch (e) { /* ignore */ }
+    });
+  }
 
   win.on('blur', () => {
     win.webContents.send('window-blur');
   });
 
   win.on('focus', () => {
+    lastGameWin = win;
     win.webContents.send('window-focus');
   });
 
@@ -3619,11 +3836,6 @@ function createGameWindow(url, gameName, account, opts) {
         updateNativeRate(1);
       }
 
-      if (accountWindow && !accountWindow.isDestroyed()) {
-        accountWindow.close();
-        log('账号管理窗口已关闭');
-      }
-
       // 游戏窗口全关 → 唤回启动器（已关闭则重建）
       const lw = showLauncherWindow();
       if (lw && !lw.isDestroyed()) {
@@ -3648,29 +3860,10 @@ function quitFromTray() {
   log('用户点击托盘退出');
   isQuitting = true;
   try {
-    // 退出前停止所有游戏窗口的音频并销毁BrowserView
+    // 标签页都在各自窗口的渲染进程里，销毁窗口即可连带回收
     for (let i = 0; i < gameWindows.length; i++) {
       const gw = gameWindows[i];
-      if (gw.localTabs) {
-        gw.localTabs.forEach((tab) => {
-          if (tab.webContents && typeof tab.webContents.isDestroyed === 'function' && !tab.webContents.isDestroyed()) {
-            tab.webContents.setAudioMuted(true);
-            tab.webContents.removeAllListeners();
-          } else if (tab.webContents) {
-            tab.webContents.setAudioMuted(true);
-            tab.webContents.removeAllListeners();
-          }
-          if (tab.view && typeof tab.view.destroy === 'function') {
-            try {
-              tab.view.destroy();
-            } catch (e) {}
-          }
-        });
-        gw.localTabs = [];
-      }
-      if (gw.win && typeof gw.win.isDestroyed === 'function' && !gw.win.isDestroyed()) {
-        gw.win.destroy();
-      } else if (gw.win) {
+      if (gw && gw.win && !gw.win.isDestroyed()) {
         gw.win.destroy();
       }
     }
@@ -3700,7 +3893,7 @@ function buildTrayMenuHtml() {
   const hoverBg = T.btnHover || 'rgba(128,128,128,.12)';
   return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>' +
     '*{margin:0;padding:0;box-sizing:border-box}' +
-    'html,body{height:100%;overflow:hidden;background:transparent}' +
+    'html,body{height:100%;overflow-y:auto;overflow-x:hidden;background:transparent}' +
     'body{padding:6px;font-family:"Microsoft YaHei",sans-serif;color:' + T.text + ';' +
       'background:' + T.bg1 + ';border:1px solid ' + T.border + ';border-radius:10px}' +
     '.item{height:34px;display:flex;align-items:center;padding:0 12px;border-radius:7px;' +
@@ -3711,6 +3904,8 @@ function buildTrayMenuHtml() {
     '</style></head><body>' +
     '<div class="item" data-action="show">显示启动器</div>' +
     '<div class="item" data-action="new">新建游戏窗口</div>' +
+    '<div class="item" data-action="debug">调试控制台</div>' +
+    '<div class="item" data-action="url-tool">网址调试</div>' +
     '<div class="sep"></div>' +
     '<div class="item danger" data-action="quit">退出</div>' +
     '<script>' +
@@ -3732,13 +3927,15 @@ function showTrayMenu() {
   }
   const scale = getUiScale();
   const baseW = 180;
-  const baseH = 124;
+  // 5 项（显示/新建/调试控制台/网址调试/退出）+ 1 条分隔 + 上下内边距 + 余量
+  const baseH = 200;
   const w = Math.round(baseW * scale);
-  const h = Math.round(baseH * scale);
+  let h = Math.round(baseH * scale);
 
   const pt = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(pt);
   const wa = display.workArea;
+  if (h > wa.height - 16) h = Math.max(120, wa.height - 16);
   let tb = null;
   try { tb = tray && typeof tray.getBounds === 'function' ? tray.getBounds() : null; } catch (e) { /* ignore */ }
 
@@ -3776,6 +3973,20 @@ function showTrayMenu() {
   try { win.setAlwaysOnTop(true, 'pop-up-menu'); } catch (e) { /* ignore */ }
   try { win.webContents.setZoomFactor(scale); } catch (e) { /* ignore */ }
   win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(buildTrayMenuHtml()));
+  // 菜单项增减后自动按内容高度修正，避免底部（如“退出”）被裁掉
+  win.webContents.once('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    win.webContents.executeJavaScript('document.documentElement.scrollHeight').then((ch) => {
+      if (!ch || win.isDestroyed()) return;
+      const need = Math.round(ch * scale) + 4;
+      const b = win.getBounds();
+      if (need > b.height) {
+        let y2 = b.y;
+        if (y2 + need > wa.y + wa.height - 4) y2 = Math.max(wa.y + 4, wa.y + wa.height - need - 4);
+        win.setBounds({ x: b.x, y: y2, width: b.width, height: need });
+      }
+    }).catch(() => {});
+  });
   win.once('ready-to-show', () => {
     if (win.isDestroyed()) return;
     try { win.webContents.setZoomFactor(scale); } catch (e) { /* ignore */ }
@@ -3791,11 +4002,124 @@ ipcMain.on('tray-menu-action', (event, action) => {
   closeTrayMenu();
   if (action === 'show') showLauncherWindow();
   else if (action === 'new') createGameWindow(DEFAULT_URL, '火影忍者Online');
+  else if (action === 'debug') openDebugConsole();
+  else if (action === 'url-tool') openUrlTool();
   else if (action === 'quit') quitFromTray();
 });
 
 ipcMain.on('tray-menu-close', (event) => {
   if (trayMenuWindow && event.sender === trayMenuWindow.webContents) closeTrayMenu();
+});
+
+function openDebugConsole() {
+  try {
+    debugConsole.open();
+    try { debugConsole.write('perf', 'INFO', perfSummary()); } catch (e) { /* ignore */ }
+  } catch (e) {
+    log('打开调试控制台失败: ' + e.message, 'WARN');
+  }
+}
+
+ipcMain.on('open-debug-console', () => {
+  openDebugConsole();
+});
+
+function getUrlToolContext() {
+  // 火影跑在 game.html 的 <webview> 里，账号信息从 guest 所在窗口取
+  const guest = getActiveGameGuest();
+  if (guest) {
+    let currentUrl = '';
+    try { currentUrl = guest.getURL(); } catch (e) { /* ignore */ }
+    let windowTitle = '';
+    const gw = getGameWindowForGuest(guest);
+    if (gw) { try { windowTitle = gw.win.getTitle() || ''; } catch (e) { /* ignore */ } }
+    return { qq: '', partition: '', currentUrl: currentUrl, hasTab: true, windowTitle: windowTitle };
+  }
+  return { qq: '', partition: '', currentUrl: '', hasTab: false };
+}
+
+// 当前游戏页所在的 webview 客进程（game.html 里每个标签一个 webview）
+function getGameWindowForGuest(guest) {
+  try {
+    const host = guest.hostWebContents;
+    if (!host) return null;
+    return (gameWindows || []).find((gw) => {
+      try { return gw && gw.win && !gw.win.isDestroyed() && gw.win.webContents.id === host.id; } catch (e) { return false; }
+    }) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function getActiveGameGuest() {
+  try {
+    const all = webContents.getAllWebContents() || [];
+    const guests = all.filter((w) => {
+      try { return !w.isDestroyed() && w.getType && w.getType() === 'webview'; } catch (e) { return false; }
+    });
+    if (!guests.length) return null;
+    const hostIds = new Set();
+    (gameWindows || []).forEach((gw) => {
+      try { if (gw && gw.win && !gw.win.isDestroyed()) hostIds.add(gw.win.webContents.id); } catch (e) { /* ignore */ }
+    });
+    const owned = guests.filter((w) => {
+      try { return w.hostWebContents && hostIds.has(w.hostWebContents.id); } catch (e) { return false; }
+    });
+    const pool = owned.length ? owned : guests;
+    const gamePool = pool.filter((w) => {
+      try { return /huoying\.qq\.com/i.test(w.getURL() || ''); } catch (e) { return false; }
+    });
+    const list = gamePool.length ? gamePool : pool;
+    // 多开时优先：当前聚焦的 webview → 聚焦窗口里的 webview → 可见窗口里的 webview
+    const focusedGuest = list.find((w) => { try { return w.isFocused(); } catch (e) { return false; } });
+    if (focusedGuest) return focusedGuest;
+    const focusedWin = list.find((w) => {
+      const gw = getGameWindowForGuest(w);
+      try { return gw && gw.win.isFocused(); } catch (e) { return false; }
+    });
+    if (focusedWin) return focusedWin;
+    const visibleWin = list.find((w) => {
+      const gw = getGameWindowForGuest(w);
+      try { return gw && gw.win.isVisible() && !gw.win.isMinimized(); } catch (e) { return false; }
+    });
+    if (visibleWin) return visibleWin;
+    return list[0] || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function getUrlToolSession() {
+  const guest = getActiveGameGuest();
+  if (guest) {
+    try { return guest.session; } catch (e) { /* ignore */ }
+  }
+  return null;
+}
+
+function navigateActiveGame(url) {
+  const guest = getActiveGameGuest();
+  if (guest) {
+    try { guest.loadURL(url); } catch (e) { /* ignore */ }
+  }
+}
+
+function openUrlTool() {
+  try {
+    urlTool.init({
+      getContext: getUrlToolContext,
+      getSession: getUrlToolSession,
+      navigate: navigateActiveGame,
+      log: (msg, level) => log(msg, level || 'INFO')
+    });
+    urlTool.open();
+  } catch (e) {
+    log('打开网址调试失败: ' + e.message, 'WARN');
+  }
+}
+
+ipcMain.on('open-url-tool', () => {
+  openUrlTool();
 });
 
 function createTray() {
@@ -3819,15 +4143,6 @@ function createTray() {
   });
 }
 
-ipcMain.on('check-flash', (event) => {
-  const found = fs.existsSync(FLASH_PATH);
-  event.reply('flash-status', {
-    found: found,
-    version: FLASH_VERSION,
-    path: FLASH_PATH
-  });
-});
-
 ipcMain.on('launch-game', (event, data) => {
   log('收到启动游戏请求: ' + data.name + ' - ' + data.url);
   
@@ -3838,80 +4153,6 @@ ipcMain.on('launch-game', (event, data) => {
   if (launcherWindow) {
     launcherWindow.hide();
   }
-});
-
-ipcMain.on('new-window', (event, url) => {
-  log('收到新建窗口请求: ' + (url || '默认URL'));
-  const win = createGameWindow(url || DEFAULT_URL, '火影忍者Online');
-  log('新建窗口已创建，当前游戏窗口数: ' + gameWindows.length);
-});
-
-ipcMain.on('get-window-count', (event) => {
-  event.returnValue = gameWindows.length;
-});
-
-ipcMain.on('set-speed', (event, speed) => {
-  log('收到设置倍速请求: ' + speed + 'x');
-  setSpeedRate(speed);
-});
-
-ipcMain.on('clear-cache', (event) => {
-  log('收到清空缓存请求');
-  
-  try {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (win && !win.isDestroyed()) {
-      const gameWindow = gameWindows.find(w => w.win === win);
-      if (gameWindow && gameWindow.localTabs && gameWindow.localCurrentTabIndex !== undefined) {
-        const activeTab = gameWindow.localTabs[gameWindow.localCurrentTabIndex];
-        if (activeTab && activeTab.webContents && !activeTab.webContents.isDestroyed()) {
-          const wc = activeTab.webContents;
-          
-          const promises = [];
-          promises.push(new Promise((resolve) => {
-            wc.session.clearStorageData({
-              storages: ['appcache', 'cookies', 'filesystem', 'indexdb', 'localstorage', 'shadercache', 'websql', 'serviceworkers', 'cacheStorage']
-            }).then(resolve).catch(resolve);
-          }));
-          promises.push(new Promise((resolve) => {
-            wc.session.clearCache().then(resolve).catch(resolve);
-          }));
-          
-          Promise.all(promises).then(() => {
-            log('缓存清除完成');
-            wc.loadURL(DEFAULT_URL);
-          }).catch((err) => {
-            log('缓存清除过程中发生错误: ' + err.message, 'ERROR');
-          });
-        }
-      }
-    }
-  } catch (e) {
-    log('清除缓存失败: ' + e.message, 'WARN');
-  }
-});
-
-ipcMain.on('refresh-page', (event) => {
-  log('收到刷新页面请求');
-  
-  try {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (win && !win.isDestroyed()) {
-      const gameWindow = gameWindows.find(w => w.win === win);
-      if (gameWindow && gameWindow.localTabs && gameWindow.localCurrentTabIndex !== undefined) {
-        const activeTab = gameWindow.localTabs[gameWindow.localCurrentTabIndex];
-        if (activeTab && activeTab.webContents && !activeTab.webContents.isDestroyed()) {
-          activeTab.webContents.loadURL(DEFAULT_URL);
-        }
-      }
-    }
-  } catch (e) {
-    log('刷新页面失败: ' + e.message, 'WARN');
-  }
-});
-
-ipcMain.on('log-message', (event, message, level) => {
-  log(message, level);
 });
 
 // 内存监控：game.html 定时上报各标签 webContentsId，超阈值回传提示重载
@@ -3937,193 +4178,6 @@ function killFlashPluginProcesses() {
   }
 }
 
-let accountWindow = null;
-
-function createAccountWindow() {
-  if (accountWindow && !accountWindow.isDestroyed()) {
-    accountWindow.focus();
-    return;
-  }
-  
-  accountWindow = new BrowserWindow({
-    width: 360,
-    height: 500,
-    resizable: false,
-    title: '账号管理',
-    parent: null,
-    modal: false,
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-      enableRemoteModule: false
-    }
-  });
-  applyUiScaleToWindow(accountWindow, 360, 500);
-  
-  accountWindow.on('closed', () => {
-    accountWindow = null;
-  });
-  
-  const accountHtml = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>账号管理</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%); color: #fff; padding: 16px; }
-    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-    .header h2 { font-size: 18px; }
-    .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
-    .btn-add { background: #00d4ff; color: #1a1a2e; font-weight: bold; }
-    .btn-add:hover { background: #00b8e6; }
-    .btn-launch-all { background: #10b981; color: #fff; }
-    .btn-launch-all:hover { background: #059669; }
-    .btn-close { background: transparent; color: #aaa; padding: 4px 8px; }
-    .btn-close:hover { color: #fff; }
-    .account-list { max-height: 320px; overflow-y: auto; }
-    .account-item { display: flex; align-items: center; justify-content: space-between; padding: 12px; background: #2d2d44; border-radius: 6px; margin-bottom: 8px; cursor: pointer; }
-    .account-item:hover { background: #3d3d5c; }
-    .account-info { flex: 1; }
-    .account-name { color: #00d4ff; font-weight: 500; }
-    .account-qq { color: #aaa; font-size: 12px; }
-    .account-actions { display: flex; gap: 4px; }
-    .action-btn { width: 28px; height: 28px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
-    .action-btn.open { background: #10b981; color: #fff; }
-    .action-btn.edit { background: #ffd700; color: #1a1a2e; }
-    .action-btn.delete { background: #e74c3c; color: #fff; }
-    .empty-hint { text-align: center; color: #666; padding: 40px; }
-    .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; }
-    .modal-box { background: #2d2d44; border-radius: 8px; padding: 20px; width: 300px; }
-    .modal-box h3 { margin-bottom: 16px; }
-    .modal-box input { width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #4a4a6a; border-radius: 4px; background: #1a1a2e; color: #fff; }
-    .modal-box button { flex: 1; padding: 10px; border: none; border-radius: 4px; margin-top: 10px; }
-    .btn-cancel { background: #4a4a6a; color: #fff; }
-    .btn-save { background: #00d4ff; color: #1a1a2e; font-weight: bold; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h2>账号列表</h2>
-    <div style="display: flex; gap: 8px;">
-      <button class="btn btn-launch-all" id="launchAll">一键启动</button>
-      <button class="btn btn-add" id="addAccount">+ 添加</button>
-      <button class="btn btn-close" onclick="window.close()">×</button>
-    </div>
-  </div>
-  <div class="account-list" id="accountList"></div>
-  
-  <script>
-    const { ipcRenderer } = require('electron');
-    let accounts = [];
-
-    function esc(v) {
-      return String(v == null ? '' : v)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-    
-    function renderList() {
-      const list = document.getElementById('accountList');
-      if (accounts.length === 0) {
-        list.innerHTML = '<div class="empty-hint">暂无账号</div>';
-        return;
-      }
-      list.innerHTML = accounts.map(a => \`
-        <div class="account-item" data-id="\${a.id}">
-          <div class="account-info">
-            <div class="account-name">\${esc(a.windowName || a.qq)}</div>
-            <div class="account-qq">\${esc(a.qq)}</div>
-          </div>
-          <div class="account-actions">
-            <button class="action-btn open" onclick="launchAccount('\${a.id}')">⊞</button>
-            <button class="action-btn edit" onclick="editAccount('\${a.id}')">✏</button>
-            <button class="action-btn delete" onclick="deleteAccount('\${a.id}')">✕</button>
-          </div>
-        </div>
-      \`).join('');
-    }
-    
-    function showModal(title, account = null) {
-      const modal = document.createElement('div');
-      modal.className = 'modal';
-      modal.innerHTML = \`
-        <div class="modal-box">
-          <h3>\${title}</h3>
-          <input id="qqInput" placeholder="QQ号/邮箱" value="\${esc(account?.qq || '')}" />
-          <input id="pwdInput" type="password" placeholder="密码（可选）" value="\${esc(account?.qqPwd || '')}" />
-          <input id="nameInput" placeholder="窗口名（可选）" value="\${esc(account?.windowName || '')}" />
-          <div style="display: flex; gap: 10px;">
-            <button class="btn-cancel" onclick="this.parentElement.parentElement.parentElement.remove()">取消</button>
-            <button class="btn-save" onclick="saveAccount('\${account?.id || ''}')">保存</button>
-          </div>
-        </div>
-      \`;
-      document.body.appendChild(modal);
-    }
-    
-    function saveAccount(accountId) {
-      const qq = document.getElementById('qqInput').value.trim();
-      const pwd = document.getElementById('pwdInput').value;
-      const name = document.getElementById('nameInput').value.trim();
-      if (!qq) return;
-      
-      if (accountId) {
-        ipcRenderer.send('update-account', { id: accountId, qq, password: pwd, windowName: name });
-      } else {
-        ipcRenderer.send('add-account', { qq, password: pwd, windowName: name });
-      }
-      document.querySelector('.modal').remove();
-    }
-    
-    function launchAccount(accountId) {
-      ipcRenderer.send('launch-account', accountId);
-    }
-    
-    function editAccount(accountId) {
-      const account = accounts.find(a => a.id === accountId);
-      if (account) showModal('编辑账号', account);
-    }
-    
-    function deleteAccount(accountId) {
-      if (confirm('确定删除此账号？')) {
-        ipcRenderer.send('remove-account', accountId);
-      }
-    }
-    
-    document.getElementById('addAccount').addEventListener('click', () => showModal('添加账号'));
-    document.getElementById('launchAll').addEventListener('click', () => ipcRenderer.send('launch-all-accounts'));
-    
-    ipcRenderer.send('get-accounts');
-    
-    ipcRenderer.on('accounts-update', (event, data) => {
-      accounts = data || [];
-      renderList();
-    });
-  </script>
-</body>
-</html>
-  `;
-  
-  accountWindow.loadURL('data:text/html,' + encodeURIComponent(accountHtml));
-}
-
-ipcMain.on('get-accounts', (event) => {
-  log('[IPC] 收到 get-accounts 请求');
-  loadAccounts();
-  log('[IPC] 账号数量: ' + accounts.length);
-  try {
-    event.sender.send('accounts-update', accounts);
-    log('[IPC] 已向发送者发送 accounts-update 事件');
-  } catch (err) {
-    log('[IPC] 发送失败：' + err.message, 'ERROR');
-  }
-});
-
 // 手动整理旧账号：重新从磁盘读取并执行「QQ + 区服」拆分
 ipcMain.handle('repair-accounts', () => {
   const before = accounts.length;
@@ -4131,10 +4185,6 @@ ipcMain.handle('repair-accounts', () => {
   broadcastAccountsChanged();
   log('[账号整理] ' + before + ' -> ' + accounts.length);
   return { ok: true, before: before, after: accounts.length };
-});
-
-ipcMain.on('debug-log', (event, message) => {
-  log('[DEBUG] ' + message);
 });
 
 ipcMain.on('add-account', (event, data) => {
@@ -4155,214 +4205,45 @@ ipcMain.on('remove-account', (event, accountId) => {
   event.reply('accounts-update', accounts);
 });
 
-ipcMain.on('launch-account', (event, payload) => {
-  const accountId = (payload && typeof payload === 'object') ? payload.accountId : payload;
-  const zoneId = (payload && typeof payload === 'object') ? payload.zoneId : '';
-  const account = accounts.find(a => a.id === accountId);
-  if (!account) {
-    log('[账号启动] 未找到账号: ' + accountId);
-    return;
-  }
-  const picked = pickAccountForZone(account, zoneId);
-  const winName = accountLabelForZone(picked, picked && picked._selectedZoneId);
-  log('[账号启动] ====================');
-  log('[账号启动] 启动账号: ' + winName + ' (' + account.qq + ')');
-  log('[账号启动] 游戏窗口数量: ' + gameWindows.length);
-
-  let targetGameWindow = gameWindows.find(w => w.win && !w.win.isDestroyed());
-
-  if (!targetGameWindow) {
-    log('[账号启动] 没有找到游戏窗口，创建新窗口');
-    createGameWindow(DEFAULT_URL, winName, picked);
-
-    setTimeout(() => {
-      const newWindow = gameWindows.find(w => w.win && !w.win.isDestroyed());
-      if (newWindow && newWindow.localTabs && newWindow.localTabs[0]) {
-        newWindow.localTabs[0]._pendingAccount = { qq: picked.qq, qqPwd: picked.qqPwd || '', credential: picked.credential || null, id: picked.id };
-        log('[账号启动] 已设置自动登录: ' + account.qq);
-      }
-    }, 500);
-  } else {
-    log('[账号启动] 找到现有窗口，窗口ID: ' + targetGameWindow.win.id);
-    log('[账号启动] 当前标签数量: ' + (targetGameWindow.localTabs ? targetGameWindow.localTabs.length : 0));
-    log('[账号启动] 在现有窗口添加标签: ' + winName);
-
-    const newTab = addTabToGameWindow(targetGameWindow, winName, picked);
-    if (newTab) {
-      log('[账号启动] 新标签创建成功，索引: ' + newTab.index);
-      newTab._pendingAccount = { qq: picked.qq, qqPwd: picked.qqPwd || '', credential: picked.credential || null, id: picked.id };
-      setupAutoLogin(newTab);
-      log('[账号启动] 已设置自动登录: ' + account.qq);
-    } else {
-      log('[账号启动] 添加标签失败');
-    }
-  }
-});
-
-ipcMain.on('launch-all-accounts', () => {
-  const validAccounts = accounts.filter(a => a.qq);
-  log('[一键启动] 准备启动 ' + validAccounts.length + ' 个账号');
-
-  let targetGameWindow = gameWindows.find(w => w.win && !w.win.isDestroyed());
-
-  validAccounts.forEach((account, index) => {
-    const picked = pickAccountForZone(account, account.lastZoneId);
-    const winName = accountLabelForZone(picked, picked && picked._selectedZoneId);
-
-    if (index === 0 && !targetGameWindow) {
-      log('[一键启动] 第1个账号，创建新窗口: ' + winName);
-      const win = createGameWindow(DEFAULT_URL, winName, picked);
-      targetGameWindow = gameWindows.find(w => w.win === win);
-      if (targetGameWindow && targetGameWindow.localTabs && targetGameWindow.localTabs[0]) {
-        targetGameWindow.localTabs[0]._pendingAccount = { qq: picked.qq, qqPwd: picked.qqPwd || '', credential: picked.credential || null, id: picked.id };
-        setupAutoLogin(targetGameWindow.localTabs[0]);
-      }
-    } else {
-      log('[一键启动] 添加标签: ' + winName);
-      if (targetGameWindow) {
-        const newTab = addTabToGameWindow(targetGameWindow, winName, picked);
-        if (newTab) {
-          newTab._pendingAccount = { qq: picked.qq, qqPwd: picked.qqPwd || '', credential: picked.credential || null, id: picked.id };
-          setupAutoLogin(newTab);
-        }
-      }
-    }
-  });
-
-  log('[一键启动] 完成启动 ' + validAccounts.length + ' 个账号');
-});
-
-ipcMain.on('fill-account', (event, accountId) => {
-  const account = accounts.find(a => a.id === accountId);
-  if (account) {
-    const senderWin = BrowserWindow.fromWebContents(event.sender);
-    if (senderWin) {
-      const gameWindow = gameWindows.find(w => w.win === senderWin);
-      if (gameWindow && gameWindow.localTabs && gameWindow.localCurrentTabIndex !== undefined) {
-        const activeTab = gameWindow.localTabs[gameWindow.localCurrentTabIndex];
-        if (activeTab && activeTab.webContents) {
-          injectQuickLogin(activeTab.webContents, account.qq, account.qqPwd || '');
-        }
-      }
-    }
-  }
-});
-
-function addTabToGameWindow(gameWindow, name, account) {
-  if (!gameWindow || !gameWindow.win || gameWindow.win.isDestroyed()) {
-    log('[addTab] 窗口无效');
-    return null;
-  }
-  
-  const win = gameWindow.win;
-  const localTabs = gameWindow.localTabs || [];
-  const toolbarHeight = 36;
-  
-  const tabIndex = localTabs.length + 1;
-  log('[addTab] 创建新标签 Tab' + tabIndex + ', 名称: ' + name);
-  
-  const sessionId = account && account.qq ? `persist:qq-${account.qq}` : `persist:game-session-${win.id}-${tabIndex}`;
-  log('[addTab] 使用Session: ' + sessionId);
-  
-  const session = require('electron').session.fromPartition(sessionId, {
-    cache: true,
-    storage: sessionId
-  });
-
-  const { BrowserView } = require('electron');
-  const view = new BrowserView({
-    webPreferences: {
-      plugins: true,
-      nodeIntegration: false,
-      contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js'),
-      webSecurity: false,
-      allowRunningInsecureContent: true,
-      session: session,
-      enableRemoteModule: false,
-      sandbox: false,
-      backgroundThrottling: true,
-      offscreen: false,
-      enablePreferredSizeMode: false
-    }
-  });
-
-  win.addBrowserView(view);
-  const contentBounds = win.getContentBounds();
-  view.setBounds({ x: 0, y: toolbarHeight, width: contentBounds.width, height: contentBounds.height - toolbarHeight });
-
-  const webContents = view.webContents;
-  trackGameContents(webContents);
-  webContents.loadURL(DEFAULT_URL);
-
-  const tabInfo = {
-    index: tabIndex,
-    name: name || '窗口' + tabIndex,
-    view: view,
-    webContents: webContents,
-    speedRate: 1,
-    _pendingAccount: null
-  };
-
-  localTabs.push(tabInfo);
-  gameWindow.localTabs = localTabs;
-  
-  // 隐藏新标签，保持当前标签显示
-  const bounds = win.getBounds();
-  
-  localTabs.forEach((tab, idx) => {
-    if (idx === gameWindow.localCurrentTabIndex) {
-      tab.view.setBounds({ x: 0, y: toolbarHeight, width: bounds.width, height: bounds.height - toolbarHeight });
-      win.addBrowserView(tab.view);
-    } else {
-      tab.view.setBounds({ x: 0, y: bounds.height, width: bounds.width, height: 0 });
-    }
-  });
-  
-  webContents.on('dom-ready', () => {
-    if (Math.abs(currentSpeedRate - 1) < 1e-6) return;
-    try {
-      const pid = webContents.getOSProcessId();
-      if (pid) injectSpeedHook(pid);
-    } catch (e) { /* ignore */ }
-    injectAllChildProcesses();
-    scheduleSpeedRescan();
-  });
-
-  webContents.on('did-finish-load', () => {
-    log('Tab' + tabIndex + ' 加载完成');
-    injectAllChildProcesses();
-  });
-
-  webContents.on('did-navigate', () => {
-    log('Tab' + tabIndex + ' 页面导航');
-  });
-
-  // 阻止新窗口打开，在当前标签内跳转
-  webContents.on('new-window', (event, newUrl) => {
-    log('Tab' + tabIndex + ' 阻止新窗口: ' + newUrl);
-    event.preventDefault();
-    webContents.loadURL(newUrl);
-  });
-
-  // 更新工具栏标签列表
-  setTimeout(() => {
-    if (typeof gameWindow.updateToolbarTabList === "function") {
-      gameWindow.updateToolbarTabList();
-      log('[addTab] 已调用updateToolbarTabList');
-    } else {
-      log('[addTab] updateToolbarTabList函数不存在');
-    }
-  }, 200);
-
-  log('[addTab] 标签创建完成: ' + name);
-  return tabInfo;
-}
-
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   log('应用启动');
+
+  // 奥义 H.264 本地缓存：先把 127.0.0.1 静态服务起好，再让窗口开始加载
+  videoCache.init({
+    videoDir: getResourcePath('videos'),
+    log,
+    onLog: (level, msg) => {
+      try { debugConsole.write('video', level, msg); } catch (e) { /* ignore */ }
+    }
+  });
+  await videoCache.start();
+  app.on('web-contents-created', (e, wc) => {
+    try { videoCache.attach(wc.session); } catch (err) { /* ignore */ }
+  });
+  try {
+    webContents.getAllWebContents().forEach((wc) => videoCache.attach(wc.session));
+  } catch (e) { /* ignore */ }
+
   resetSettingsIfNeeded();
   loadConfig();
+  // DPI 诊断：确认高分屏机器上游戏是否真的按 1:1 运行（scaleFactor 应为 1）
+  try {
+    const d = screen.getPrimaryDisplay();
+    log('[dpi] size=' + d.size.width + 'x' + d.size.height +
+      ' work=' + d.workAreaSize.width + 'x' + d.workAreaSize.height +
+      ' scaleFactor=' + d.scaleFactor +
+      ' regDpi=' + readSystemDpi() +
+      ' uiScale=' + getUiScale() +
+      ' gameDpr=' + (app.commandLine.getSwitchValue('force-device-scale-factor') || 'native'));
+  } catch (e) { /* ignore */ }
+  // 清理旧版分散日志（已统一到调试控制台，只在桌面按需生成）
+  try {
+    const ud = app.getPath('userData');
+    ['perf.log', 'perf.log.old', 'video-cache.log', 'video-cache.log.old'].forEach((f) => {
+      const p = path.join(ud, f);
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    });
+  } catch (e) { /* ignore */ }
   loadAccounts();
   applyProcessPriority();
   detectWindowsVersion();
@@ -4375,12 +4256,14 @@ app.whenReady().then(() => {
   // 初始化流量抓包层（关闭时零副作用）
   // [全量抓包] CDP 抓包（http-*.jsonl）只有全量模式和喵问答模式需要（喵问答要靠它拿配图）；
   // 组织统计 / 忍者检测走 net-log，不需要它
-  const needCdp = CAPTURE_MODE === 'full' || CAPTURE_MODE === 'miao';
+  const needCdp = CAPTURE_MODE === 'full' || CAPTURE_MODE === 'miao' || CAPTURE_MODE === 'shop';
   capture.initCapture({ enabled: needCdp });
   if (CAPTURE_MODE === 'full') {
     log('[capture] 全量抓包已开启，输出目录: ' + capture.getCaptureDir());
   } else if (CAPTURE_MODE === 'miao') {
     log('[capture] 喵问答抓包已开启（net-log + CDP）');
+  } else if (CAPTURE_MODE === 'shop') {
+    log('[capture] 商城特惠抓包已开启（net-log + CDP）');
   } else if (CAPTURE_MODE === 'stats') {
     log('[capture] 组织统计抓包已开启（net-log）');
   }
@@ -4417,7 +4300,7 @@ app.whenReady().then(() => {
         message: '上次运行检测到显卡进程崩溃。',
         detail: '已在「设置 → 性能」里自动关闭「强制启用 GPU」（' + crashAt + '）。\n' +
           '如果之后画面正常，保持关闭即可；需要恢复可重新打开。\n' +
-          '若关闭后仍会卡死，可再开启「软件渲染（兼容模式）」。',
+          '若关闭后仍会卡死，可再开启「兼容模式」。',
         buttons: ['知道了']
       }).catch(() => {});
     }, 1500);
@@ -4472,8 +4355,9 @@ app.whenReady().then(() => {
       buttons: ['立即重启', '稍后']
     });
     if (response === 0) {
+      isQuitting = true;
       app.relaunch();
-      app.exit(0);
+      app.quit();
     }
   });
   
@@ -4486,7 +4370,8 @@ app.whenReady().then(() => {
     const label = mode === 'stats' ? '组织统计（生成 Excel）'
       : (mode === 'full' ? '全量抓包（导出原始文件）'
         : (mode === 'quiz' ? '题库抓包（忍者检测）'
-          : (mode === 'miao' ? '题库抓包（喵问答）' : '关闭')));
+          : (mode === 'miao' ? '题库抓包（喵问答）'
+            : (mode === 'shop' ? '商城特惠（导出 JSON + 图片）' : '关闭'))));
     log('[capture] 抓包模式已切换为: ' + mode);
     const { response } = await dialog.showMessageBox({
       type: 'info',
@@ -4519,21 +4404,6 @@ app.whenReady().then(() => {
     }
   });
 
-  // 性能诊断日志：即时生效
-  ipcMain.on('set-perf-diag', (event, on) => {
-    config.perfDiag = !!on;
-    saveConfig();
-    log('性能诊断日志已' + (on ? '开启' : '关闭'));
-  });
-
-  // 游戏优先：即时调整本应用所有进程优先级（高/普通，不使用实时）
-  ipcMain.on('set-high-priority', (event, on) => {
-    config.highPriority = !!on;
-    saveConfig();
-    applyProcessPriority();
-    log('游戏优先已' + (on ? '开启' : '关闭'));
-  });
-
   // 游戏入口：新开窗口生效
   ipcMain.on('set-game-entry', (event, v) => {
     config.gameEntry = normalizeGameEntry(v);
@@ -4553,43 +4423,39 @@ app.whenReady().then(() => {
     });
   });
 
-  // 大屏适配：立即通知已打开的游戏窗口重新计算缩放
-  ipcMain.on('set-fit-large-screen', (event, on) => {
-    config.fitLargeScreen = !!on;
+  // 渲染分辨率：value 形如 fixed:1600x900。固定 16:9，只影响渲染像素，不改变窗口尺寸
+  ipcMain.on('set-render-config', (event, value) => {
+    const raw = String(value || '');
+    const parts = raw.split(':');
+    if (parts[0] === 'fixed') {
+      const dim = String(parts[1] || '').split('x');
+      config.renderWidth = normalizeRenderWidth(dim[0]);
+    }
     saveConfig();
-    log('大屏适配已' + (on ? '开启' : '关闭'));
+    const rc = getRenderConfig();
+    log('渲染分辨率已设为: ' + rc.width + 'x' + rc.height + '（16:9，等比缩放铺满）');
     gameWindows.forEach((gw) => {
       if (gw && gw.win && !gw.win.isDestroyed()) {
-        gw.win.webContents.send('fit-large-screen-update', config.fitLargeScreen);
+        gw.win.webContents.send('render-config-update', rc);
       }
     });
   });
 
-  // 大屏渲染尺寸：1920×1080 / 1600×900 / 1366×768 / 1280×720
-  ipcMain.on('set-render-size', (event, v) => {
-    config.renderSize = normalizeRenderSize(v);
-    saveConfig();
-    log('渲染分辨率已设为: ' + config.renderSize);
-    gameWindows.forEach((gw) => {
-      if (gw && gw.win && !gw.win.isDestroyed()) {
-        gw.win.webContents.send('render-size-update', config.renderSize);
-      }
-    });
-  });
-
-  // 界面缩放（启动器/账号窗口）
+  // 界面缩放：0=自动；1/1.25/1.5/1.75/2=固定倍率。只影响启动器/账号窗口与游戏窗口覆盖层，不影响 Flash 渲染。
   ipcMain.on('set-ui-scale', (event, v) => {
-    const n = Number(v);
-    config.uiScale = (n >= 1 && n <= 2) ? n : 0;
+    config.uiScale = normalizeUiScale(v);
     saveConfig();
-    log('界面缩放已设为: ' + (config.uiScale ? Math.round(config.uiScale * 100) + '%' : '自动'));
+    const scale = getUiScale();
+    log('界面缩放已设为: ' + (config.uiScale === 0 ? ('自动（' + scale + 'x）') : (Math.round(scale * 100) + '%')));
     if (launcherWindow && !launcherWindow.isDestroyed()) {
       applyUiScaleToWindow(launcherWindow, 360, 640);
-      try { launcherWindow.webContents.send('ui-scale-state', Number(config.uiScale) || 0); } catch (e) { /* ignore */ }
+      try { launcherWindow.webContents.send('ui-scale-state', config.uiScale); } catch (e) { /* ignore */ }
     }
-    if (accountWindow && !accountWindow.isDestroyed()) {
-      applyUiScaleToWindow(accountWindow, 360, 500);
-    }
+    gameWindows.forEach((gw) => {
+      if (gw && gw.win && !gw.win.isDestroyed()) {
+        gw.win.webContents.send('ui-scale-update', scale);
+      }
+    });
   });
 
   // 抓包缓存：查询占用 / 一键清理（设置面板用）
@@ -4621,8 +4487,8 @@ app.whenReady().then(() => {
     log('软件渲染（兼容模式）已' + (on ? '开启' : '关闭'));
     const { response } = await dialog.showMessageBox({
       type: 'info',
-      title: '软件渲染（兼容模式）',
-      message: '已' + (on ? '开启' : '关闭') + '软件渲染（兼容模式），需要重启应用才能生效。',
+      title: '兼容模式',
+      message: '已' + (on ? '开启' : '关闭') + '兼容模式，需要重启应用才能生效。',
       detail: on ? '开启后不走显卡渲染，稳定性最好，但帧率会下降、更吃 CPU。' : '',
       buttons: ['立即重启', '稍后']
     });
@@ -4654,6 +4520,19 @@ app.whenReady().then(() => {
     }
   });
 
+  // 老板键（更多侧边栏里的按钮；全局快捷键也走这里）
+  ipcMain.on('boss-key', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return;
+    if (!gameWindows.some((g) => g && g.win === win)) return;
+    toggleBossKey(win);
+  });
+
+  // 窗口透明度：所有游戏窗口统一生效，并保存为下次开窗默认值
+  ipcMain.on('set-game-opacity', (event, pct) => {
+    applyGameOpacity(pct);
+  });
+
   // F11 全局捕获：注册在 web-contents-created 上，可覆盖 webview guest（宿主页面 keydown 收不到）
   app.on('web-contents-created', (event, wc) => {
     try { wc.on('did-finish-load', applyProcessPriority); } catch (e) {}
@@ -4673,32 +4552,40 @@ app.whenReady().then(() => {
   createLauncherWindow();
   createTray();
 
+  // 老板键：F9（单键，游戏里基本用不到）或 Ctrl+Shift+B，全局隐藏 / 还原游戏窗口
+  ['F9', 'CommandOrControl+Shift+B'].forEach((accel) => {
+    try {
+      const ok = globalShortcut.register(accel, () => toggleBossKey());
+      if (!ok) log('[boss] 老板键注册失败：' + accel + ' 可能已被其他程序占用', 'WARN');
+      else log('[boss] 老板键已注册：' + accel);
+    } catch (e) {
+      log('[boss] 老板键注册失败: ' + accel + ' ' + e.message, 'WARN');
+    }
+  });
+
   // 游戏优先：定时补设新出现的渲染/Flash 插件进程（只在高优先级开启时）
   setInterval(() => {
     if (config.highPriority !== false) applyProcessPriority();
   }, 15000);
 
-  // 性能诊断：开启后每 60s 记录一次逐进程内存/CPU 到 userData/perf.log
-  if (config.perfDiag) {
-    try {
-      fs.appendFileSync(path.join(app.getPath('userData'), 'perf.log'),
-        '[' + new Date().toISOString() + '] ' + perfSummary() + ' (startup)\n');
-    } catch (e) { /* ignore */ }
-  }
+  // 性能快照：只在调试控制台记录时写入（30s 一次），不再落 C 盘
   setInterval(() => {
-    if (!config.perfDiag) return;
+    if (!debugConsole.isRecording()) return;
     try {
       const p = collectPerf();
-      const head = '[' + new Date().toISOString() + '] ' + perfSummary();
       const detail = p.per.length ? '\n  ' + p.per.join('\n  ') : '';
-      fs.appendFileSync(path.join(app.getPath('userData'), 'perf.log'), head + detail + '\n');
-    } catch (e) {}
-  }, 60000);
+      debugConsole.write('perf', 'INFO', perfSummary() + detail);
+    } catch (e) { /* ignore */ }
+  }, 30000);
 });
 
 app.on('window-all-closed', () => {
   // 托盘常驻应用：窗口全关（例如关掉启动器）不退出应用，退出统一走托盘「退出」菜单。
   // 真实退出会先触发 before-quit，所以这里不退出不影响退出流程。
+});
+
+app.on('will-quit', () => {
+  try { globalShortcut.unregisterAll(); } catch (e) { /* ignore */ }
 });
 
 app.on('activate', () => {
@@ -4714,6 +4601,12 @@ app.on('before-quit', () => {
 
   // 账号异步保存可能还没落盘，退出前同步补一次
   flushAccountSaveSync();
+
+  // 关闭本地视频服务
+  try { videoCache.stop(); } catch (e) { /* ignore */ }
+  // 停止调试日志并落盘
+  try { debugConsole.stop(); } catch (e) { /* ignore */ }
+
 
 
   // 抓包开启时，退出前拉起独立导出进程（等主进程退出、netlog 写完后自动处理）
@@ -4755,6 +4648,15 @@ app.on('before-quit', () => {
       log('[capture] 已启动喵问答导出子进程');
     } catch (e) {
       log('[capture] 启动喵问答导出子进程失败: ' + e.message, 'WARN');
+    }
+  }
+  // [商城特惠抓包] shop：解析商品数据 + 商品图片，导出 JSON
+  else if (CAPTURE_MODE === 'shop') {
+    try {
+      spawn(process.execPath, _spawnAppArgs.concat(['--export-shop', String(process.pid)]), { detached: true, stdio: 'ignore' }).unref();
+      log('[capture] 已启动商城特惠导出子进程');
+    } catch (e) {
+      log('[capture] 启动商城特惠导出子进程失败: ' + e.message, 'WARN');
     }
   }
   saveConfig();

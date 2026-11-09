@@ -235,8 +235,22 @@
     background: #fff; color: var(--accent); font-weight: 600;
     box-shadow: 0 1px 3px rgba(16,24,40,.08);
   }
-  .chart { width: 100%; height: 300px; }
+  .chart { width: 100%; height: 300px; position: relative; }
   .chart svg { display: block; width: 100%; height: 100%; }
+  .chart-tip {
+    position: absolute; z-index: 5; pointer-events: none;
+    min-width: 132px; padding: 8px 10px; border-radius: 10px;
+    background: rgba(23,37,50,.93); color: #fff;
+    font-size: 11.5px; line-height: 1.65; white-space: nowrap;
+    box-shadow: 0 8px 22px rgba(16,24,40,.2);
+    transform: translate(-50%,-100%);
+    opacity: 0; transition: opacity .12s ease;
+  }
+  .chart-tip.show { opacity: 1; }
+  .chart-tip .t { color: #cbd9e6; margin-bottom: 2px; }
+  .chart-tip .u { color: #5eead4; }
+  .chart-tip .c { color: #93c5fd; }
+  .chart-tip b { font-weight: 700; }
   .legend { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-top: 6px; color: var(--sub); font-size: 11.5px; }
   .legend span { display: inline-flex; align-items: center; gap: 7px; }
   .legend i { width: 18px; height: 3px; border-radius: 3px; display: inline-block; }
@@ -365,9 +379,9 @@
         </div>
         <ul class="note-list">
           <li><span class="note-dot"></span><div><b>当前在线</b><p>按客户端去重；启动器每 5 秒上报，20 秒无上报自动剔除。</p></div></li>
-          <li><span class="note-dot blue"></span><div><b>10 分钟活跃</b><p>当前统计周期内出现过的唯一客户端，中途离线也算活跃。</p></div></li>
+          <li><span class="note-dot blue"></span><div><b>10 分钟活跃</b><p>当前 10 分钟窗口内至少上报过一次的去重客户端；中途离线也算活跃，所以通常 ≥ 快照在线。</p></div></li>
           <li><span class="note-dot violet"></span><div><b>版本分布</b><p>2.1.0 起上报版本号；2.0.0 及更早显示「旧版/未知」。</p></div></li>
-          <li><span class="note-dot orange"></span><div><b>数据存储</b><p>每 10 分钟落盘；当前 3 个月常驻，更早月份归档，点「全部历史」按需读取。</p></div></li>
+          <li><span class="note-dot orange"></span><div><b>数据存储</b><p>每 10 分钟落盘；常驻最近 30 天，更早月份归档，点「全部历史」时按需读取。</p></div></li>
         </ul>
         <div class="note-foot">数据目录 <code>%APPDATA%\hyol-online-server\stats\</code></div>
       </div>
@@ -398,11 +412,11 @@
 
   <section class="panel trend">
     <div class="trend-head">
-      <h2 class="panel-title">10 分钟趋势<span class="panel-sub">默认当前 3 个月，全部历史按需读取</span></h2>
+      <h2 class="panel-title">10 分钟趋势<span class="panel-sub">默认最近 30 天，全部历史按需读取</span></h2>
       <div class="segmented" id="rangeGroup">
-        <button class="active" type="button" data-hours="24">24 小时</button>
+        <button type="button" data-hours="24">24 小时</button>
         <button type="button" data-hours="168">7 天</button>
-        <button type="button" data-hours="720">30 天</button>
+        <button class="active" type="button" data-hours="720">30 天</button>
         <button type="button" data-scope="all">全部历史</button>
       </div>
     </div>
@@ -413,13 +427,13 @@
       </div>
     </div>
     <div class="legend">
-      <span><i style="background:#14b8a6"></i>10 分钟活跃客户端</span>
-      <span><i style="background:#3b82f6"></i>快照时在线客户端</span>
+      <span title="10 分钟窗口内至少上报过一次的去重客户端；中途离线也算"><i style="background:#14b8a6"></i>10 分钟活跃客户端</span>
+      <span title="每 10 分钟生成快照的那一刻仍在线的去重客户端（20 秒内有上报）"><i style="background:#3b82f6"></i>快照时在线客户端</span>
     </div>
   </section>
 
   <footer>
-    默认加载当前月 + 前两个月；更早数据按月归档，点「全部历史」时才读取<br>
+    默认展示最近 30 天；更早数据按月归档，点「全部历史」时才读取<br>
     数据目录 <code>%APPDATA%\hyol-online-server\stats\</code> · 页面每 10 秒自动刷新<br>
     远程访问：把地址中的 127.0.0.1 换成服务器公网 IP
   </footer>
@@ -429,7 +443,7 @@
 (function () {
   'use strict';
 
-  var state = { hours: 24, scope: 'active', overview: null, history: [] };
+  var state = { hours: 720, scope: 'active', overview: null, history: [], stepMinutes: 10 };
   var $ = function (id) { return document.getElementById(id); };
 
   function fetchJson(url) {
@@ -494,7 +508,7 @@
     var vlist = sortVersions(o.versions);
     setText('versionCount', vlist.length);
     setText('topVersion', topVersion(o.versions));
-    setText('historyCountText', '当前 3 个月 ' + (o.historyCount || 0) + ' 条');
+    setText('historyCountText', '常驻 ' + (o.historyCount || 0) + ' 条');
 
     renderVersions(o);
     renderSnapshots(o.recent || []);
@@ -636,7 +650,70 @@
         '<path d="' + lineC.join(' ') + '" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
         '<path d="' + lineU.join(' ') + '" fill="none" stroke="#14b8a6" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>' +
         '<circle cx="' + X(points.length - 1).toFixed(1) + '" cy="' + Y(lastU.uniqueClients).toFixed(1) + '" r="3.2" fill="#14b8a6" stroke="#fff" stroke-width="2"/>' +
+        '<g id="hoverLayer" style="display:none">' +
+          '<line id="hoverLine" x1="0" y1="' + padT + '" x2="0" y2="' + (padT + innerH) + '" stroke="#b9cadb" stroke-width="1" stroke-dasharray="4 3"/>' +
+          '<circle id="hoverDotU" r="3.6" fill="#14b8a6" stroke="#fff" stroke-width="2"/>' +
+          '<circle id="hoverDotC" r="3.6" fill="#3b82f6" stroke="#fff" stroke-width="2"/>' +
+        '</g>' +
       '</svg>';
+
+    // ---------- 悬停提示：显示该时间点的两条曲线数值 ----------
+    var hoverLayer = box.querySelector('#hoverLayer');
+    var hoverLine = box.querySelector('#hoverLine');
+    var hoverDotU = box.querySelector('#hoverDotU');
+    var hoverDotC = box.querySelector('#hoverDotC');
+    var tip = document.createElement('div');
+    tip.className = 'chart-tip';
+    box.appendChild(tip);
+
+    function hideTip() {
+      if (hoverLayer) hoverLayer.style.display = 'none';
+      tip.classList.remove('show');
+    }
+    function moveTip(e) {
+      var rect = box.getBoundingClientRect();
+      if (!rect.width) return;
+      var px = (e.clientX - rect.left) * (w / rect.width);
+      if (px < padL - 4 || px > w - padR + 4) { hideTip(); return; }
+      var ratio = (px - padL) / (innerW || 1);
+      var idx = Math.round(ratio * (points.length - 1));
+      idx = Math.max(0, Math.min(points.length - 1, idx));
+      var p = points[idx];
+      var x = X(idx);
+      var yu = Y(p.uniqueClients);
+      var yc = Y(p.clients);
+
+      hoverLayer.style.display = '';
+      hoverLine.setAttribute('x1', x.toFixed(1));
+      hoverLine.setAttribute('x2', x.toFixed(1));
+      hoverDotU.setAttribute('cx', x.toFixed(1));
+      hoverDotU.setAttribute('cy', yu.toFixed(1));
+      hoverDotC.setAttribute('cx', x.toFixed(1));
+      hoverDotC.setAttribute('cy', yc.toFixed(1));
+
+      var stepNote = state.stepMinutes > 10
+        ? '<div class="t">≈ ' + state.stepMinutes + ' 分钟均值</div>'
+        : '';
+      tip.innerHTML =
+        '<div class="t">' + fmtTime(p.ts, true) + '</div>' +
+        stepNote +
+        '<div><span class="u">●</span> 10 分钟活跃 <b>' + (Number(p.uniqueClients) || 0) + '</b></div>' +
+        '<div><span class="c">●</span> 快照时在线 <b>' + (Number(p.clients) || 0) + '</b></div>';
+
+      var left = (x / w) * rect.width;
+      var top = (Math.min(yu, yc) / h) * rect.height - 10;
+      tip.style.left = Math.max(72, Math.min(rect.width - 72, left)) + 'px';
+      tip.style.top = Math.max(64, top) + 'px';
+      tip.classList.add('show');
+    }
+    box.onmousemove = moveTip;
+    box.onmouseleave = hideTip;
+    box.ontouchmove = function (e) {
+      if (e.touches && e.touches[0]) {
+        moveTip({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+      }
+    };
+    box.ontouchend = hideTip;
   }
 
   function loadOverview() {
@@ -651,6 +728,7 @@
     var url = state.scope === 'all' ? '/api/history?all=1' : '/api/history?hours=' + state.hours;
     return fetchJson(url).then(function (data) {
       state.history = data.points || [];
+      state.stepMinutes = Number(data.stepMinutes) || 10;
       renderChart(state.history);
     }).catch(function () {
       renderChart([]);

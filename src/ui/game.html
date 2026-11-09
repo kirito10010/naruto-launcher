@@ -19,6 +19,11 @@
       --separator: #dbe7e5;
       --accent: #14b8a6;
       --toolbarHeight: 44px;
+      --uiScale: 1;
+      --toolbarScale: 1;
+      --sideTop: 44px;
+      --sideHeight: calc(100vh - 44px);
+      --sideFullHeight: 100vh;
     }
     body {
       background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
@@ -40,6 +45,7 @@
       flex-shrink: 0;
       position: relative;
       z-index: 900;
+      zoom: var(--toolbarScale);
     }
     .tb-left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
     .tb-right { display: flex; align-items: center; gap: 6px; -webkit-app-region: no-drag; }
@@ -68,8 +74,9 @@
     .tbtn:hover { background: rgba(128,128,128,.16); }
     .tbtn.active { background: var(--accent); color: #fff; }
     body.fullscreen .toolbar { display: none; }
-    body.fullscreen .tab-sidebar { top: 0; height: 100vh; }
-    body.fullscreen .account-sidebar { top: 0; height: 100vh; }
+    body.fullscreen .tab-sidebar { top: 0; height: var(--sideFullHeight); }
+    body.fullscreen .account-sidebar { top: 0; height: var(--sideFullHeight); }
+    body.fullscreen .more-sidebar { top: 0; height: var(--sideFullHeight); }
     .tabs-container {
       display: none;
       align-items: center;
@@ -161,9 +168,9 @@
     .tab-sidebar {
       position: fixed;
       left: -220px;
-      top: var(--toolbarHeight);
+      top: var(--sideTop);
       width: 220px;
-      height: calc(100vh - var(--toolbarHeight));
+      height: var(--sideHeight);
       background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
       border-right: 1px solid var(--border);
       transition: left 0.25s ease;
@@ -171,6 +178,7 @@
       display: flex;
       flex-direction: column;
       box-shadow: 2px 0 8px rgba(0,0,0,0.08);
+      zoom: var(--uiScale);
     }
     .tab-sidebar.visible {
       left: 0;
@@ -277,66 +285,106 @@
     .tab-sidebar-item.active .tab-sidebar-close:hover {
       color: #fff;
     }
-    .select-container {
-      position: relative;
-    }
-    .select-container select {
-      height: 30px;
-      padding: 0 26px 0 10px;
-      border: 1px solid var(--btnBorder);
-      border-radius: 8px;
-      background: var(--btnBg);
-      color: var(--text);
-      font-size: 12.5px;
-      cursor: pointer;
-      outline: none;
-      font-family: 'Microsoft YaHei', sans-serif;
-      appearance: none;
-      -webkit-appearance: none;
-    }
-    .select-container::after {
-      content: '▼';
-      position: absolute;
-      right: 9px;
-      top: 50%;
-      transform: translateY(-50%);
-      font-size: 8px;
-      color: var(--text);
-      pointer-events: none;
-    }
-    .menu-popover {
-      position: absolute;
-      top: calc(var(--toolbarHeight) - 4px);
-      right: 96px;
-      min-width: 190px;
-      background: var(--bg1);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      box-shadow: 0 10px 30px rgba(0,0,0,.16);
-      padding: 6px;
-      display: none;
-      z-index: 1000;
-      -webkit-app-region: no-drag;
-    }
-    .menu-popover.open { display: block; }
-    .menu-backdrop {
+    /* 更多：右侧抽屉 */
+    .more-sidebar {
       position: fixed;
-      inset: 0;
-      z-index: 999;
-      display: none;
-      -webkit-app-region: no-drag;
+      right: -300px;
+      top: var(--sideTop);
+      width: 300px;
+      height: var(--sideHeight);
+      background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+      border-left: 1px solid var(--border);
+      transition: right 0.3s ease;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      zoom: var(--uiScale);
+      box-shadow: -2px 0 8px rgba(0,0,0,0.08);
     }
-    .menu-backdrop.open { display: block; }
+    .more-sidebar.visible { right: 0; }
+    .more-sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .more-sidebar-title { font-size: 13px; font-weight: 600; color: var(--text); }
+    .more-sidebar-close {
+      border: none;
+      background: transparent;
+      color: var(--sub);
+      font-size: 14px;
+      cursor: pointer;
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+    }
+    .more-sidebar-close:hover { background: rgba(128,128,128,.16); color: var(--text); }
+    .more-sidebar-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; }
+    .more-sidebar-foot {
+      flex-shrink: 0;
+      padding: 8px 14px 14px;
+      border-top: 1px solid var(--border);
+      text-align: center;
+    }
+    .about-link {
+      color: var(--accent);
+      font-size: 11.5px;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .about-link:hover { opacity: .75; }
     .mi {
       padding: 9px 12px;
-      border-radius: 8px;
+      border-radius: 10px;
       font-size: 12.5px;
       color: var(--text);
       cursor: pointer;
-      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: rgba(128,128,128,.06);
+      border: 1px solid transparent;
+      margin-bottom: 6px;
+      transition: background .15s, border-color .15s;
     }
-    .mi:hover { background: rgba(128,128,128,.16); }
-    .mi-sep { height: 1px; background: var(--border); margin: 5px 8px; }
+    .mi:hover { background: rgba(128,128,128,.16); border-color: var(--border); }
+    .mi-key { font-size: 10.5px; color: var(--sub); font-weight: normal; }
+    .more-sec { font-size: 10.5px; color: var(--sub); font-weight: 600; margin: 12px 10px 4px; }
+    .more-sec:first-child { margin-top: 2px; }
+    .more-opacity { padding: 10px 12px 6px; }
+    .more-opacity-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12.5px;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+    .more-opacity-head b { font-size: 11.5px; color: var(--accent); }
+    .more-opacity input[type=range] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+    .more-speed { padding: 4px 12px 10px; }
+    .more-speed-btns { display: flex; gap: 5px; }
+    .more-speed-btns button {
+      flex: 1 1 0;
+      border: 1px solid var(--btnBorder);
+      background: var(--btnBg);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 0;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .more-speed-btns button:hover { background: var(--btnHover); }
+    .more-speed-btns button.active {
+      background: var(--accent);
+      border-color: transparent;
+      color: #fff;
+      font-weight: 600;
+    }
     .win-ctrls {
       display: flex;
       gap: 2px;
@@ -443,6 +491,8 @@
       min-height: 0;
       position: relative;
       overflow: hidden;
+      /* 16:9 舞台之外的留边统一用黑色，避免透出浅色页面背景 */
+      background: #000;
     }
     .webview-wrap webview {
       position: absolute;
@@ -452,6 +502,8 @@
       height: 100%;
       z-index: 1;
       background: #fff;
+      /* 固定为独立合成层：切换/缩放时少一次重绘，且让 CSS 缩放的纹理走合成器 */
+      will-change: transform;
     }
     .webview-wrap webview.hidden {
       z-index: 0;
@@ -465,15 +517,16 @@
     .account-sidebar {
       position: fixed;
       right: -280px;
-      top: var(--toolbarHeight);
+      top: var(--sideTop);
       width: 280px;
-      height: calc(100vh - var(--toolbarHeight));
+      height: var(--sideHeight);
       background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
       border-left: 1px solid var(--border);
       transition: right 0.3s ease;
       z-index: 1000;
       display: flex;
       flex-direction: column;
+      zoom: var(--uiScale);
     }
     .account-sidebar.visible {
       right: 0;
@@ -657,6 +710,7 @@
       width: 320px;
       color: var(--text);
       box-shadow: 0 20px 60px rgba(0,0,0,0.28);
+      zoom: var(--uiScale);
     }
     .add-account-box h3 {
       color: var(--text);
@@ -722,29 +776,9 @@
       </div>
     </div>
     <div class="tb-right">
-      <div class="select-container">
-        <select id="speed-select">
-          <option value="1" selected>1x 还原</option>
-          <option value="2">2x</option>
-          <option value="4">4x</option>
-          <option value="6">6x</option>
-          <option value="10">10x</option>
-          <option value="20">20x</option>
-          <option value="0.5">0.5x 减速</option>
-        </select>
-      </div>
+      <button class="tbtn" id="btn-relogin" title="凭证登录失败？改用账号密码登录" style="display:none;width:auto;padding:0 9px;font-size:12px;">密码登录</button>
       <button class="tbtn" id="btn-accounts" title="账号管理"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
       <button class="tbtn" id="btn-more" title="更多">&#8943;</button>
-      <div class="menu-backdrop" id="moreBackdrop"></div>
-      <div class="menu-popover" id="moreMenu">
-        <div class="mi" data-act="refresh">刷新（保留登录状态）</div>
-        <div class="mi" data-act="repair-accounts">整理旧账号（多区拆分）</div>
-        <div class="mi" data-act="tabmode" id="miTabMode">标签栏：侧边</div>
-        <div class="mi" data-act="mute" id="miMute">静音：关</div>
-        <div class="mi-sep"></div>
-        <div class="mi" data-act="help">操作说明</div>
-        <div class="mi" data-act="fullscreen">全屏（F11）</div>
-      </div>
       <div class="win-ctrls">
         <button class="cbtn" id="btn-min" title="最小化">&#8211;</button>
         <button class="cbtn" id="btn-max" title="最大化">&#9744;</button>
@@ -774,6 +808,43 @@
     <div class="account-sidebar-list" id="account-sidebar-list"></div>
   </div>
 
+  <!-- 更多：右侧抽屉 -->
+  <div class="more-sidebar" id="moreSidebar">
+    <div class="more-sidebar-header">
+      <span class="more-sidebar-title">更多</span>
+      <button class="more-sidebar-close" id="moreSidebarClose" title="关闭">&#10005;</button>
+    </div>
+    <div class="more-sidebar-body">
+      <div class="more-sec">窗口</div>
+      <div class="mi" data-act="refresh">刷新</div>
+      <div class="mi" data-act="mute" id="miMute">静音：关</div>
+      <div class="mi" data-act="tabmode" id="miTabMode">标签栏：侧边</div>
+      <div class="mi" data-act="fullscreen">全屏（F11）</div>
+      <div class="mi" data-act="boss">老板键：隐藏 / 还原<span class="mi-key">F9</span></div>
+      <div class="more-opacity">
+        <div class="more-opacity-head"><span>窗口透明度</span><b id="opacityVal">100%</b></div>
+        <input type="range" id="opacityRange" min="10" max="100" step="5" value="100">
+      </div>
+      <div class="more-speed">
+        <div class="more-opacity-head"><span>变速</span><b id="moreSpeedVal">1x</b></div>
+        <div class="more-speed-btns" id="moreSpeedBtns">
+          <button data-speed="0.5">0.5x</button>
+          <button data-speed="1">1x</button>
+          <button data-speed="2">2x</button>
+          <button data-speed="4">4x</button>
+          <button data-speed="6">6x</button>
+          <button data-speed="10">10x</button>
+        </div>
+      </div>
+      <div class="more-sec">工具</div>
+      <div class="mi" data-act="url-tool">网址调试</div>
+      <div class="mi" data-act="help">操作说明</div>
+    </div>
+    <div class="more-sidebar-foot">
+      <span class="about-link" id="moreAbout">关于</span>
+    </div>
+  </div>
+
   <script>
     const container = document.getElementById('container');
     const tabSidebar = document.getElementById('tab-sidebar');
@@ -781,8 +852,10 @@
     const btnTabSidebar = document.getElementById('btn-tab-sidebar');
     const btnTabSidebarAdd = document.getElementById('tab-sidebar-add');
     const accountSidebarEl = document.getElementById('account-sidebar');
+    const accountSidebarList = document.getElementById('account-sidebar-list');
+    const moreSidebarEl = document.getElementById('moreSidebar');
     const sidebarBackdrop = document.getElementById('sidebarBackdrop');
-    let openSidebar = null;   // 'tabs' | 'accounts' | null（两个侧边栏互斥）
+    let openSidebar = null;   // 'tabs' | 'accounts' | 'more' | null（侧边栏互斥）
 
     // 统一开关侧边栏：传同一个值再调用一次 = 关闭；传 null = 关闭
     function setSidebar(mode) {
@@ -790,6 +863,7 @@
       openSidebar = next;
       tabSidebar.classList.toggle('visible', next === 'tabs');
       if (accountSidebarEl) accountSidebarEl.classList.toggle('visible', next === 'accounts');
+      if (moreSidebarEl) moreSidebarEl.classList.toggle('visible', next === 'more');
       if (sidebarBackdrop) sidebarBackdrop.classList.toggle('open', !!next);
       try { window.gameAPI.toggleSidebar(!!next); } catch (e) {}
       if (next === 'accounts') {
@@ -808,18 +882,19 @@
       if (!openSidebar) return;
       const t = e.target;
       if (!t || !t.closest) return;
-      if (t.closest('#tab-sidebar') || t.closest('#account-sidebar') ||
-          t.closest('#btn-tab-sidebar') || t.closest('#btn-accounts') ||
+      if (t.closest('#tab-sidebar') || t.closest('#account-sidebar') || t.closest('#moreSidebar') ||
+          t.closest('#btn-tab-sidebar') || t.closest('#btn-accounts') || t.closest('#btn-more') ||
           t.closest('#sidebarBackdrop')) return;
       setSidebar(null);
     }, true);
     const tabsContainer = document.getElementById('tabs-container');
     const tabsList = document.getElementById('tabs-list');
     const tabAddH = document.getElementById('tab-add-h');
-    const speedSelect = document.getElementById('speed-select');
     const btnMore = document.getElementById('btn-more');
-    const moreMenu = document.getElementById('moreMenu');
-    const moreBackdrop = document.getElementById('moreBackdrop');
+    const opacityRange = document.getElementById('opacityRange');
+    const opacityVal = document.getElementById('opacityVal');
+    const moreSpeedBtns = document.getElementById('moreSpeedBtns');
+    const moreSpeedVal = document.getElementById('moreSpeedVal');
     const miTabMode = document.getElementById('miTabMode');
     const miMute = document.getElementById('miMute');
 
@@ -829,8 +904,8 @@
     let currentGame = null;
     let diskCache = true;
     let windowSlot = 1;   // 由主进程 game-info 下发：本窗口的会话槽位（避免多窗口共用同一 partition）
-    let fitLargeScreen = true;   // 大屏适配：按窗口等比放大游戏画面
-    let renderSize = '1920x1080'; // 大屏适配内部渲染尺寸（放大由 CSS 合成，不增加 Flash 渲染像素）
+    // 渲染分辨率（固定 16:9）：只决定游戏渲染像素，整体等比缩放到窗口；默认 1600×900
+    let renderConfig = { width: 1600, height: 900 };
     let flashQuality = 'high';   // 游戏画面画质：high / medium / low
     let dragState = null;        // 标签拖拽状态
     let isMuted = false;
@@ -842,16 +917,31 @@
     function normalizeFlashQuality(v) {
       return (v === 'low' || v === 'medium' || v === 'high') ? v : 'high';
     }
-    const RENDER_SIZES = {
-      '1920x1080': { w: 1920, h: 1080 },
-      '1600x900': { w: 1600, h: 900 },
-      '1366x768': { w: 1366, h: 768 },
-      '1280x720': { w: 1280, h: 720 }
-    };
-    function normalizeRenderSize(v) {
-      if (v === '1020x600') return '1280x720';
-      return RENDER_SIZES[v] ? v : '1920x1080';
+
+    // 游戏最大只到 1920×1080；只保留 5 个常用档位，从高到低
+    const RENDER_WIDTHS = [1920, 1600, 1440, 1280];
+    function normalizeRenderConfig(cfg) {
+      const c = cfg || {};
+      const width = RENDER_WIDTHS.indexOf(parseInt(c.width, 10)) >= 0 ? parseInt(c.width, 10) : 1600;
+      return { width: width, height: Math.round(width * 9 / 16) };
     }
+
+    // 游戏窗口覆盖层缩放：只放大侧边栏/弹窗，不动工具栏与游戏内容
+    let uiScale = 1;
+    function applyUiScaleVars() {
+      const scale = Math.max(1, Number(uiScale) || 1);
+      const root = document.documentElement;
+      const toolbar = 44;
+      // 标题栏只做小幅放大，避免高分辨率下显得笨重
+      const toolbarScale = Math.min(1.3, 1 + (scale - 1) * 0.45);
+      const toolbarVisual = toolbar * toolbarScale;
+      root.style.setProperty('--uiScale', scale);
+      root.style.setProperty('--toolbarScale', toolbarScale);
+      root.style.setProperty('--sideTop', (toolbarVisual / scale) + 'px');
+      root.style.setProperty('--sideHeight', ((window.innerHeight - toolbarVisual) / scale) + 'px');
+      root.style.setProperty('--sideFullHeight', (window.innerHeight / scale) + 'px');
+    }
+    window.addEventListener('resize', applyUiScaleVars);
 
     // IPC 通信
     const ipcRenderer = require('electron').ipcRenderer;
@@ -939,6 +1029,10 @@
         ipcRenderer.send('set-game-speed', speed);
       },
       // 刷新当前标签（只影响本标签，不再全局杀 Flash 插件进程）
+      // 网址调试（手动改 URL/参数发请求）
+      openUrlTool: function() {
+        ipcRenderer.send('open-url-tool');
+      },
       refreshPage: function() {
         var tab = tabs.find(function(t) { return t.id === activeTabId; });
         if (!tab || !tab._webview) return;
@@ -962,6 +1056,14 @@
       // 最大化
       maxWindow: function() {
         ipcRenderer.send('max-window');
+      },
+      // 老板键：隐藏 / 还原当前游戏窗口
+      bossKey: function() {
+        ipcRenderer.send('boss-key');
+      },
+      // 窗口透明度（20~100）
+      setGameOpacity: function(pct) {
+        ipcRenderer.send('set-game-opacity', pct);
       },
       // 新建标签
       newTab: function() {
@@ -1032,18 +1134,10 @@
       if (n) delete usedTabSlots[n];
     }
 
-    // 画质切换 + wmode
-    // quality：活跃标签用启动器配置的画质，后台/失焦标签固定 low
-    // active：wmode 与画质解耦，活跃标签 direct（插件直绘最快），后台标签 opaque
-    function applyFlashQuality(webview, quality, active) {
-      if (!webview) return;
-      const wmode = active ? 'direct' : 'opaque';
-      const q = (quality === 'low' || quality === 'medium') ? quality : 'high';
-      const js = '(function(){ var els = document.querySelectorAll("embed, object"); for (var i=0;i<els.length;i++){ try { els[i].setAttribute("quality", "' + q + '"); els[i].setAttribute("wmode", "' + wmode + '"); } catch(e){} } })();';
-      try {
-        webview.executeJavaScript(js).catch(function () {});
-      } catch (e) {}
-    }
+    // 注：Flash 的 quality / wmode 只在 embed 创建时读取，运行时 setAttribute 基本无效，
+    // 因此画质统一由创建前挂载的 preload 决定（flash-quality-*.js），这里不再运行时注入。
+
+
 
     // 标签节流：冻结非活跃标签，资源全部给当前玩的标签
     function setTabThrottle(tab, throttled) {
@@ -1151,7 +1245,15 @@
       }
       tab._usingCredential = !!cred;
 
+      const targetUrl = cred ? cred.login_url : (zoneLoginUrl || (currentGame ? currentGame.url : 'https://huoying.qq.com/'));
       const webview = document.createElement('webview');
+      // 关键：Flash 在页面加载时按当时的逻辑视口初始化舞台。
+      // 先挂 about:blank，等 guest 就绪、把页面缩放（逻辑宽度=1920）设好后再加载真实地址，
+      // 否则游戏会按当前窗口尺寸布局，之后再缩放就会变成裁切/发虚的画面。
+      tab._stageW = normalizeRenderConfig(renderConfig).width;
+      tab._webview = webview;
+      paintStage(tab);
+
       webview.setAttribute('plugins', '');
       // 不设置 allowpopups，阻止 window.open 弹窗
       webview.setAttribute('partition', getPartition(tab));
@@ -1163,7 +1265,7 @@
         const preloadFile = flashQuality === 'low' ? 'flash-quality-low-preload.js' : 'flash-quality-medium-preload.js';
         webview.setAttribute('preload', new URL(preloadFile, document.baseURI).href);
       }
-      webview.src = cred ? cred.login_url : (zoneLoginUrl || (currentGame ? currentGame.url : 'https://huoying.qq.com/'));
+      webview.src = 'about:blank';
       webview.dataset.tabId = tab.id;
 
       if (tab.id !== activeTabId) {
@@ -1189,6 +1291,7 @@
         // 凭证直连后如果被重定向到登录页 → 凭证失效：打标记并回退官方登录
         if (tab._usingCredential && isLoginPage(e.url)) {
           tab._usingCredential = false;
+          updateReloginButton();
           const acc = tab._pendingAccount;
           if (acc && acc.id) {
             try { window.gameAPI.markCredentialExpired(acc.id, (acc.credential && acc.credential.zone_id) || ''); } catch (err) {}
@@ -1201,6 +1304,9 @@
           }, 120);
           return;
         }
+        // 导航后页面缩放可能被重置：立刻重新应用，保证游戏始终按 1920 逻辑宽度布局
+        tab._appliedZoom = 0;
+        paintStage(tab);
         tryPendingInject(tab);
       });
 
@@ -1208,15 +1314,12 @@
         tryPendingInject(tab);
       });
 
-      // QQ游戏大厅入口把游戏放在 iframe 里，iframe 导航时也要重新注入原生尺寸适配
-      webview.addEventListener('did-frame-navigate', () => {
-        applyViewportScale();
-      });
-
       webview.addEventListener('did-stop-loading', () => {
         tryPendingInject(tab);
-        // 大屏适配：游戏舞台按窗口原生尺寸渲染
-        applyViewportScale();
+        // 页面导航后 zoomFactor 可能被重置，强制本标签重算一次
+        tab._appliedZoom = 0;
+        tab._renderKey = null;
+        applyRenderConfig();
         // QQ游戏大厅入口被拦（403 Forbidden）时，自动回退到官网入口，避免停在错误页
         try {
           const cur = webview.getURL() || '';
@@ -1229,7 +1332,6 @@
             }).catch(function () {});
           }
         } catch (e) {}
-        applyFlashQuality(webview, tab.id === activeTabId ? flashQuality : 'low', tab.id === activeTabId);
       });
 
       webview.addEventListener('did-start-loading', () => {
@@ -1263,8 +1365,23 @@
       });
 
       tab._webview = webview;
+      // about:blank 的 guest 就绪后再加载真实地址：此时页面缩放已经设好，Flash 会按 1920 逻辑宽度初始化
+      let targetLoaded = false;
+      const startTargetLoad = function () {
+        if (targetLoaded) return;
+        targetLoaded = true;
+        try { webview.removeEventListener('dom-ready', onBlankReady); } catch (e) {}
+        try { paintStage(tab); } catch (e) {}
+        try { webview.loadURL(targetUrl); } catch (e) {}
+      };
+      const onBlankReady = function () { startTargetLoad(); };
+      webview.addEventListener('dom-ready', onBlankReady);
+
       container.appendChild(webview);
-      applyViewportScale();
+      tab._renderKey = null;
+      paintStage(tab);
+      // 兜底：about:blank 的 dom-ready 没触发也要加载
+      setTimeout(startTargetLoad, 800);
     }
 
     // 添加标签
@@ -1357,17 +1474,22 @@
       if (prevTab && prevTab._webview) {
         prevTab._webview.classList.add('hidden');
         try { prevTab._webview.setAudioMuted(true); } catch (e) {}
-        applyFlashQuality(prevTab._webview, 'low', false);
         setTabThrottle(prevTab, true);   // 冻结旧标签
       }
       if (nextTab && nextTab._webview) {
         nextTab._webview.classList.remove('hidden');
         try { nextTab._webview.setAudioMuted(isMuted); } catch (e) {}
-        applyFlashQuality(nextTab._webview, flashQuality, true);
         setTabThrottle(nextTab, false);  // 新标签全速
       }
 
       renderTabs();
+    }
+
+    function updateReloginButton() {
+      const btn = document.getElementById('btn-relogin');
+      if (!btn) return;
+      const active = tabs.find(t => t.id === activeTabId);
+      btn.style.display = (active && active._usingCredential) ? '' : 'none';
     }
 
     // 渲染标签（侧边栏 + 顶部任务栏）
@@ -1398,6 +1520,7 @@
       const dragFill = document.createElement('div');
       dragFill.className = 'tabs-drag-fill';
       tabsList.appendChild(dragFill);
+      updateReloginButton();
     }
 
     // 拖拽：同一栏内拖动 = 调整顺序（不拆窗口）
@@ -1412,10 +1535,14 @@
     }
     function hideDropLine() { if (dropLineEl) dropLineEl.style.display = 'none'; }
 
-    // 计算插入位置时排除正在拖动的标签，否则第一项往下拖会被 `from < insertIndex` 抵消
+    // 计算插入位置时排除正在拖动的项，否则第一项往下拖会被 `from < insertIndex` 抵消
     function getDragItems(listEl) {
       return Array.prototype.slice.call(listEl.children).filter(function (x) {
-        return x.dataset && x.dataset.tabId && (!dragState || x.dataset.tabId !== dragState.tabId);
+        if (!x.dataset) return false;
+        if (x.classList && x.classList.contains('tab-placeholder')) return false;
+        if (x.dataset.tabId) return !dragState || x.dataset.tabId !== dragState.tabId;
+        if (x.dataset.accountId) return !dragState || x.dataset.accountId !== dragState.accountId;
+        return false;
       });
     }
 
@@ -1607,8 +1734,12 @@
       cleanupDragPlaceholder();
       hideDropLine();
       hideDragOverlay();
-      reorderTab(st.tabId, idx);
-      if (activeTabId !== st.tabId) switchTab(st.tabId);
+      if (st.accountId) {
+        reorderAccount(st.accountId, idx);
+      } else {
+        reorderTab(st.tabId, idx);
+        if (activeTabId !== st.tabId) switchTab(st.tabId);
+      }
     }
 
     function onOverlayDragOver(e) {
@@ -1618,7 +1749,8 @@
       const src = dragState.sourceEl;
       if (!src || !src.parentNode) return;
       const listEl = src.parentNode;
-      updateDragAt(listEl, listEl === tabSidebarList, e.clientX, e.clientY);
+      const vertical = (listEl === tabSidebarList || listEl === accountSidebarList);
+      updateDragAt(listEl, vertical, e.clientX, e.clientY);
     }
 
     function onOverlayDrop(e) {
@@ -1654,8 +1786,94 @@
       renderTabs();
     }
 
+    // 账号列表拖动换顺序（与侧边标签栏同一套 ghost / 占位块 / 插入线）
+    function reorderAccount(accountId, insertIndex) {
+      const visible = accounts.filter(function (a) { return a.qq; });
+      const from = visible.findIndex(function (a) { return String(a.id) === String(accountId); });
+      if (from < 0) return;
+      const moved = visible.splice(from, 1)[0];
+      const idx = Math.max(0, Math.min(visible.length, insertIndex));
+      visible.splice(idx, 0, moved);
+      // 只重排可见账号，保持其它记录位置不变
+      let vi = 0;
+      accounts = accounts.map(function (a) { return a.qq ? visible[vi++] : a; });
+      renderAccountSidebar();
+      try { window.gameAPI.saveAccounts(accounts); } catch (e) {}
+    }
+
+    function bindAccountDrag(el, account) {
+      el.draggable = true;
+      // 按钮 / 下拉框不参与拖拽，避免影响点击和选择区服
+      Array.prototype.forEach.call(el.querySelectorAll('button, select, input'), function (c) {
+        try { c.setAttribute('draggable', 'false'); } catch (e) {}
+      });
+      el.addEventListener('dragstart', function (e) {
+        const r = el.getBoundingClientRect();
+        dragState = {
+          accountId: String(account.id), dropped: false, hidePending: true,
+          over: null, preview: null, lastX: e.clientX, lastY: e.clientY,
+          sourceEl: el, placeholder: null
+        };
+        try {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', String(account.id));
+          const blank = document.createElement('img');
+          blank.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+          blank.style.position = 'fixed';
+          blank.style.left = '-10px';
+          blank.style.top = '-10px';
+          blank.style.width = '1px';
+          blank.style.height = '1px';
+          document.body.appendChild(blank);
+          e.dataTransfer.setDragImage(blank, 0, 0);
+          setTimeout(function () { if (blank.parentNode) blank.parentNode.removeChild(blank); }, 0);
+        } catch (err) {}
+        const cs = window.getComputedStyle(el);
+        const ph = document.createElement('div');
+        ph.className = 'tab-placeholder';
+        ph.style.width = r.width + 'px';
+        ph.style.height = r.height + 'px';
+        ph.style.flex = '0 0 auto';
+        ph.style.margin = cs.margin;
+        ph.style.boxSizing = 'border-box';
+        dragState.placeholder = ph;
+        const ghost = el.cloneNode(true);
+        ghost.classList.add('tab-drag-ghost');
+        ghost.style.width = r.width + 'px';
+        ghost.style.height = r.height + 'px';
+        ghost.style.left = r.left + 'px';
+        ghost.style.top = r.top + 'px';
+        ghost.style.boxSizing = 'border-box';
+        ghost.style.margin = '0';
+        document.body.appendChild(ghost);
+        dragState.ghost = ghost;
+        dragState.ghostW = r.width;
+        dragState.ghostH = r.height;
+        dragState.grabDX = e.clientX - r.left;
+        dragState.grabDY = e.clientY - r.top;
+        el.classList.add('dragging');
+      });
+      el.addEventListener('dragend', function (e) {
+        el.classList.remove('dragging');
+        cleanupDragPlaceholder();
+        hideDropLine();
+        const st = dragState;
+        dragState = null;
+        if (!st || st.dropped) return;
+        if (st.over) {
+          const r = st.over.rect;
+          const fx = (e && typeof e.clientX === 'number') ? e.clientX : st.lastX;
+          const fy = (e && typeof e.clientY === 'number') ? e.clientY : st.lastY;
+          if (fx >= r.left && fx <= r.right && fy >= r.top && fy <= r.bottom) {
+            reorderAccount(st.accountId, (st.preview && st.preview.idx != null) ? st.preview.idx : st.over.idx);
+          }
+        }
+      });
+    }
+
     bindDropZone(tabSidebarList, true);
     bindDropZone(tabsList, false);
+    bindDropZone(accountSidebarList, true);
 
     function setTabDisplayMode(mode, persist) {
       tabDisplayMode = (mode === 'taskbar') ? 'taskbar' : 'sidebar';
@@ -1779,11 +1997,17 @@
         '</div>';
       });
       list.innerHTML = html;
+      // 绑定拖动换顺序（按钮/下拉框不参与）
+      Array.prototype.forEach.call(list.querySelectorAll('.account-sidebar-item'), function (el) {
+        const id = el.getAttribute('data-account-id');
+        const acc = items.find(function (x) { return String(x.id) === String(id); });
+        if (acc) bindAccountDrag(el, acc);
+      });
     }
 
     // 显示账号模态框
     function showAccountModal(options) {
-      const { title, qq, password, windowName, onConfirm, accountId } = options;
+      const { title, qq, password, hasPassword, windowName, onConfirm, accountId } = options;
 
       window.gameAPI.showModal(true);
 
@@ -1808,6 +2032,8 @@
 
       if (qq) qqInput.value = qq;
       if (windowName) winNameInput.value = windowName;
+      pwdInput.placeholder = hasPassword ? '已保存密码（留空不修改）' : '密码（可选）';
+      if (hasPassword) pwdInput.title = '已保存密码，留空不会修改';
 
       const close = () => {
         modal.remove();
@@ -1852,17 +2078,21 @@
       showAccountModal({
         title: '编辑账号',
         qq: account.qq,
+        hasPassword: !!account.qqPwd,
         windowName: account.windowName,
         onConfirm: (qqInput, pwdInput, winNameInput, close) => {
           const newQq = qqInput.value.trim();
           const newPwd = pwdInput.value;
           const newWinName = winNameInput.value.trim();
 
+          const patch = { id: accountId, windowName: newWinName };
           if (newQq && /^(\d{5,12}|[^@\s]+@[^@\s]+\.[^@\s]+)$/.test(newQq)) {
-            window.gameAPI.updateAccount({ id: accountId, qq: newQq, password: newPwd, windowName: newWinName });
-          } else if (newPwd || newWinName) {
-            window.gameAPI.updateAccount({ id: accountId, password: newPwd, windowName: newWinName });
+            patch.qq = newQq;
           }
+          // 密码留空 = 保留已保存的密码，不再被编辑操作清空
+          if (newPwd) patch.password = newPwd;
+
+          window.gameAPI.updateAccount(patch);
           close();
         }
       });
@@ -1912,10 +2142,27 @@
       }
     });
 
-    speedSelect.addEventListener('change', (e) => {
-      currentSpeed = parseFloat(e.target.value);
-      window.gameAPI.setSpeed(currentSpeed);
-    });
+    // 变速：更多侧边栏按钮组（工具栏不再放变速）
+    function formatSpeed(v) { return (Math.abs(v - 0.5) < 1e-6) ? '0.5x' : (v + 'x'); }
+    function syncSpeedUI(v) {
+      currentSpeed = Number(v) || 1;
+      if (moreSpeedVal) moreSpeedVal.textContent = formatSpeed(currentSpeed);
+      if (moreSpeedBtns) {
+        Array.prototype.forEach.call(moreSpeedBtns.querySelectorAll('button[data-speed]'), function (b) {
+          b.classList.toggle('active', Math.abs(parseFloat(b.dataset.speed) - currentSpeed) < 1e-6);
+        });
+      }
+    }
+    if (moreSpeedBtns) {
+      moreSpeedBtns.addEventListener('click', function (e) {
+        const b = e.target.closest('button[data-speed]');
+        if (!b) return;
+        const v = parseFloat(b.dataset.speed);
+        syncSpeedUI(v);
+        try { window.gameAPI.setSpeed(v); } catch (err) {}
+      });
+    }
+    syncSpeedUI(currentSpeed);
 
     function syncMuteLabel() {
       if (miMute) miMute.textContent = isMuted ? '静音：已开' : '静音：关';
@@ -1968,13 +2215,17 @@
             '<div class="help-sec">' +
               '<div class="help-sec-title">账号<kbd>Alt+A</kbd></div>' +
               '<div class="help-desc">点顶部 👤 打开；登录一次会自动记住凭证。同一个 QQ 进过多个区时，每个区会单独保存为一条账号，一键启动会把所有区服一起打开。</div>' +
+              '<div class="help-desc">账号卡片可以直接上下拖动调整顺序，拖动结果会自动保存。</div>' +
             '</div>' +
             '<div class="help-sec">' +
               '<div class="help-sec-title">窗口</div>' +
               '<div class="help-kv"><kbd>F11</kbd><span>全屏 / 退出全屏</span></div>' +
               '<div class="help-kv"><kbd>F5</kbd><span>刷新（保留登录状态）</span></div>' +
               '<div class="help-kv"><kbd>Alt+M</kbd><span>静音 / 取消静音</span></div>' +
-              '<div class="help-kv"><kbd>Alt+S</kbd><span>打开更多菜单</span></div>' +
+              '<div class="help-kv"><kbd>F9</kbd><span>老板键：隐藏 / 还原游戏窗口（也可 Ctrl+Shift+B）</span></div>' +
+              '<div class="help-kv"><kbd>Ctrl+← / →</kbd><span>降低 / 提高窗口透明度</span></div>' +
+              '<div class="help-kv"><kbd>Ctrl+↑ / ↓</kbd><span>提高 / 降低变速档位</span></div>' +
+              '<div class="help-kv"><kbd>Alt+S</kbd><span>打开更多侧边栏</span></div>' +
               '<div class="help-kv"><kbd>Esc</kbd><span>关闭弹层 / 菜单 / 侧边栏；全部关闭后再按会转给游戏关闭内部窗口</span></div>' +
             '</div>' +
           '</div>' +
@@ -1985,48 +2236,104 @@
       mask.querySelector('#helpClose').addEventListener('click', close);
     }
 
-    function closeMoreMenu() {
-      moreMenu.classList.remove('open');
-      moreBackdrop.classList.remove('open');
-    }
-
-    function openMoreMenu() {
-      moreMenu.classList.add('open');
-      moreBackdrop.classList.add('open');
-    }
-
+    // 更多（右侧抽屉）
     btnMore.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (moreMenu.classList.contains('open')) {
-        closeMoreMenu();
-      } else {
-        openMoreMenu();
-      }
+      setSidebar('more');
     });
 
-    // 点击弹窗之外的任意位置关闭
-    moreBackdrop.addEventListener('click', closeMoreMenu);
+    document.getElementById('moreSidebarClose').addEventListener('click', () => setSidebar(null));
 
-    moreMenu.addEventListener('click', (e) => {
+    // 关于：作者 / 开源说明 / 署名
+    function openAbout() {
+      if (document.getElementById('aboutModal')) return;
+      const mask = document.createElement('div');
+      mask.id = 'aboutModal';
+      mask.className = 'help-mask';
+      mask.innerHTML =
+        '<div class="help-card">' +
+          '<div class="help-head"><span>关于</span><button class="help-close" id="aboutClose">&#10005;</button></div>' +
+          '<div class="help-body">' +
+            '<div class="help-sec">' +
+              '<div class="help-sec-title">作者</div>' +
+              '<div class="help-desc">lijin · QQ 3025863517 · 邮箱 a3025863517@163.com</div>' +
+              '<div class="help-desc">Q 群：489455643</div>' +
+            '</div>' +
+            '<div class="help-sec">' +
+              '<div class="help-sec-title">关于启动器</div>' +
+              '<div class="help-desc">火影忍者 Online 页游桌面启动器，开源项目，基于 Electron + PPAPI Flash。</div>' +
+            '</div>' +
+            '<div class="help-sec">' +
+              '<div class="help-sec-title">主要亮点</div>' +
+              '<div class="help-desc">多标签 / 多账号、一键启动、凭证自动登录与本地加密、画质与分辨率调节、变速、窗口透明度、老板键、绿色免安装。</div>' +
+            '</div>' +
+            '<div class="help-sec">' +
+              '<div class="help-sec-title">开源与署名</div>' +
+              '<div class="help-desc">本项目开源，欢迎学习与二次开发；修改或分发时请保留原作者 lijin 及本关于信息。</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(mask);
+      const close = () => { const el = document.getElementById('aboutModal'); if (el) el.remove(); };
+      mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
+      mask.querySelector('#aboutClose').addEventListener('click', close);
+    }
+    document.getElementById('moreAbout').addEventListener('click', function () {
+      openAbout();
+    });
+
+    moreSidebarEl.addEventListener('click', (e) => {
       const mi = e.target.closest('.mi');
       if (!mi) return;
       const act = mi.dataset.act;
-      closeMoreMenu();
       if (act === 'refresh') {
+        setSidebar(null);
         window.gameAPI.refreshPage();
-      } else if (act === 'repair-accounts') {
-        window.gameAPI.repairAccounts().then(function () {
-          window.gameAPI.getAccounts();
-        }).catch(function () {});
       } else if (act === 'tabmode') {
         setTabDisplayMode(tabDisplayMode === 'sidebar' ? 'taskbar' : 'sidebar');
       } else if (act === 'mute') {
         toggleMute();
       } else if (act === 'help') {
+        setSidebar(null);
         openHelp();
+      } else if (act === 'url-tool') {
+        setSidebar(null);
+        window.gameAPI.openUrlTool();
       } else if (act === 'fullscreen') {
+        setSidebar(null);
         ipcRenderer.send('toggle-fullscreen');
+      } else if (act === 'boss') {
+        window.gameAPI.bossKey();
       }
+    });
+
+    // 窗口透明度（只作用于当前游戏窗口；保存为下次开窗默认值）
+    function setOpacityUI(pct) {
+      const v = Math.max(10, Math.min(100, Math.round(Number(pct) || 100)));
+      if (opacityRange) opacityRange.value = String(v);
+      if (opacityVal) opacityVal.textContent = v + '%';
+    }
+    if (opacityRange) {
+      opacityRange.addEventListener('input', function () {
+        const v = Math.max(10, Math.min(100, parseInt(this.value, 10) || 100));
+        if (opacityVal) opacityVal.textContent = v + '%';
+        try { window.gameAPI.setGameOpacity(v); } catch (e) {}
+      });
+    }
+
+    // 凭证登录失败：切回账号密码登录（自动填充）
+    document.getElementById('btn-relogin').addEventListener('click', () => {
+      const tab = tabs.find(t => t.id === activeTabId);
+      if (!tab || !tab._usingCredential || !tab._webview) return;
+      const acc = tab._pendingAccount;
+      if (acc && acc.id) {
+        try { window.gameAPI.markCredentialExpired(acc.id, (acc.credential && acc.credential.zone_id) || ''); } catch (e) {}
+        if (acc.credential) acc.credential.expired_at = new Date().toISOString();
+      }
+      tab._usingCredential = false;
+      updateReloginButton();
+      try { tab._webview.loadURL(currentGame ? currentGame.url : 'https://huoying.qq.com/'); } catch (e) {}
+      // 后续导航会走 tryPendingInject，自动填入 QQ 和已保存的密码
     });
 
     // 账号按钮
@@ -2115,8 +2422,7 @@
     });
 
     ipcRenderer.on('speed-update', (event, speed) => {
-      currentSpeed = speed;
-      speedSelect.value = speed;
+      syncSpeedUI(speed);
     });
 
     ipcRenderer.on('mute-update', (event, muted) => {
@@ -2124,8 +2430,44 @@
       syncMuteLabel();
     });
 
+    // 界面缩放只影响侧栏/弹窗等覆盖层，不参与 Flash 渲染
+    ipcRenderer.on('ui-scale-update', (event, v) => {
+      uiScale = Math.max(1, Number(v) || 1);
+      applyUiScaleVars();
+    });
+
+    // 窗口透明度变化（主进程统一下发）
+    ipcRenderer.on('opacity-state', (event, pct) => {
+      setOpacityUI(pct);
+    });
+
     ipcRenderer.on('fullscreen-changed', (event, on) => {
       document.body.classList.toggle('fullscreen', !!on);
+      applyUiScaleVars();
+      syncGuestResize();
+    });
+
+    // 最大化 ≠ 全屏：最大化保留工具栏、任务栏可见；全屏才隐藏工具栏
+    function applyWindowState(state) {
+      const s = state || {};
+      const fs = !!s.fullscreen;
+      const max = !!s.maximized && !fs;
+      document.body.classList.toggle('fullscreen', fs);
+      document.body.classList.toggle('maximized', max);
+      const btn = document.getElementById('btn-max');
+      if (btn) {
+        btn.innerHTML = max ? '&#10064;' : '&#9744;';
+        btn.title = max ? '还原' : '最大化';
+      }
+      applyUiScaleVars();
+    }
+
+    ipcRenderer.on('window-state', (event, state) => {
+      applyWindowState(state);
+      // 最大化 / 还原 / 全屏切换时容器尺寸分几帧才稳定，多补几次重排
+      syncGuestResize();
+      setTimeout(syncGuestResize, 120);
+      setTimeout(syncGuestResize, 350);
     });
 
     ipcRenderer.on('game-info', (event, data) => {
@@ -2133,9 +2475,11 @@
       windowSlot = data.windowSlot || 1;
       currentGame = data.game;
       accounts = data.accounts || [];
-      fitLargeScreen = data.fitLargeScreen !== false;
-      renderSize = normalizeRenderSize(data.renderSize);
+      renderConfig = normalizeRenderConfig(data.renderConfig);
       flashQuality = normalizeFlashQuality(data.flashQuality);
+      uiScale = Math.max(1, Number(data.uiScale) || 1);
+      setOpacityUI(data.gameOpacity == null ? 100 : Math.round(Number(data.gameOpacity) * 100));
+      applyUiScaleVars();
       document.title = data.game.name;
       document.getElementById('windowTitle').textContent = data.game.name;
       // 恢复上次选择的标签栏模式（侧边 / 顶栏），不回写配置
@@ -2153,19 +2497,18 @@
 
     ipcRenderer.on('flash-quality-update', (event, quality) => {
       flashQuality = normalizeFlashQuality(quality);
-      // 新标签立即使用新画质；当前活跃标签尽力运行时切换（部分 Flash 版本需刷新才完全生效）
-      const active = tabs.find(function (t) { return t.id === activeTabId; });
-      if (active && active._webview) applyFlashQuality(active._webview, flashQuality, true);
+      // 画质由 preload 在 embed 创建时生效；已有页面不强行改写（Flash 创建后改 quality 基本无效）
     });
 
-    ipcRenderer.on('render-size-update', (event, v) => {
-      renderSize = normalizeRenderSize(v);
-      syncGuestResize();
-    });
-
-    ipcRenderer.on('fit-large-screen-update', (event, on) => {
-      fitLargeScreen = !!on;
-      syncGuestResize();
+    ipcRenderer.on('render-config-update', (event, cfg) => {
+      renderConfig = normalizeRenderConfig(cfg);
+      // 配置变化时所有标签同步切换逻辑宽度（窗口大小不变，游戏按新宽度重新排版）
+      tabs.forEach(function (t) {
+        t._stageW = renderConfig.width;
+        t._appliedZoom = 0;
+        t._renderKey = null;
+      });
+      applyRenderConfig();
     });
 
     ipcRenderer.on('launch-account', (event, account) => {
@@ -2183,8 +2526,6 @@
           tab._webview.classList.add('paused');
         }
         if (tab.id !== activeTabId) setTabThrottle(tab, true);
-        // 窗口失焦：整窗降画质（只降画质，不停逻辑，不影响挂机）
-        applyFlashQuality(tab._webview, 'low', false);
       });
     });
 
@@ -2204,8 +2545,6 @@
           try { tab._webview.setAudioMuted(true); } catch (e) {}
         }
         setTabThrottle(tab, !active);
-        // 活跃标签恢复配置画质，其余保持低画质
-        applyFlashQuality(tab._webview, active ? flashQuality : 'low', active);
       });
     }
 
@@ -2228,80 +2567,130 @@
       syncGuestResize();
     });
 
-    // 宿主窗口尺寸变化后，主动让游戏页重新算一次舞台尺寸。
-    // 游戏页的 onResize 依赖 window resize 事件；最大化/还原后有时收不到，画面就不贴合窗口。
-    let hostResizeTimer = null;
+    // 宿主窗口尺寸变化：每帧跟随一次，停手后校验 guest 视口
+    let hostResizeRaf = 0;
+    let guestCheckTimer = null;
+    let guestCheckRetries = 0;
     function syncGuestResize() {
-      if (hostResizeTimer) clearTimeout(hostResizeTimer);
-      hostResizeTimer = setTimeout(function () {
-        hostResizeTimer = null;
-        applyViewportScale();
-        setTimeout(function () {
-          tabs.forEach(function (tab) {
-            if (!tab._webview) return;
-            try {
-              tab._webview.executeJavaScript('window.dispatchEvent(new Event("resize"));').catch(function () {});
-            } catch (e) {}
-          });
-        }, 60);
-      }, 120);
+      if (!hostResizeRaf) {
+        hostResizeRaf = requestAnimationFrame(function () {
+          hostResizeRaf = 0;
+          applyRenderConfig();
+        });
+      }
+      guestCheckRetries = 0;
+      if (guestCheckTimer) clearTimeout(guestCheckTimer);
+      guestCheckTimer = setTimeout(function () {
+        guestCheckTimer = null;
+        verifyGuestViewport();
+      }, 250);
     }
-    // 大屏适配：
-    //  - 1920×1080（清晰）：沿用整页 zoom 放大，文字按屏幕分辨率重新栅格化，字最清楚；
-    //  - 1600/1366/1280（性能）：固定低分辨率渲染，再用 CSS 放大，字会变软但更流畅。
-    function applyViewportScale() {
+
+    // 与 2.2.0 相同的关键算法：缩放倍率向上取 1/8 步进（1.125 / 1.25 / 1.375 / 1.5 …），
+    // 这样 tile 边界始终落在整数像素上，地图方块之间不会出现细黑线。
+    // zoom 只在 ≥1 时使用（不缩小），且保证逻辑视口不超过所选分辨率（不会渲染出黑边）。
+    function computeRenderTarget(stageWidth) {
       const cw = Math.max(1, container ? container.clientWidth : window.innerWidth);
       const ch = Math.max(1, container ? container.clientHeight : window.innerHeight);
-      const target = RENDER_SIZES[renderSize] || RENDER_SIZES['1920x1080'];
-      let last = null;
+      const stageW = Math.max(640, Math.min(1920, stageWidth || (renderConfig && renderConfig.width) || 1600));
+      const stageH = Math.round(stageW * 9 / 16);
+      const raw = Math.max(cw / stageW, ch / stageH);
+      const zoom = Math.max(1, Math.min(4, Math.ceil(raw * 8 - 1e-6) / 8));
+      return {
+        stageW: Math.max(640, Math.round(cw / zoom)),
+        stageH: Math.max(360, Math.round(ch / zoom)),
+        zoom: zoom,
+        k: zoom,
+        cw: cw,
+        ch: ch,
+        dx: 0,
+        dy: 0
+      };
+    }
 
-      function resetGeometry(el) {
+    // 把一个标签的 webview 元素铺满窗口，并用页面缩放把逻辑视口宽度锁到舞台宽度
+    function paintStage(tab) {
+      const el = tab && tab._webview;
+      if (!el) return null;
+      const t = computeRenderTarget(tab._stageW);
+      const key = t.stageW + ':' + t.cw + 'x' + t.ch;
+      if (tab._renderKey !== key) {
+        tab._renderKey = key;
         el.style.width = '100%';
         el.style.height = '100%';
         el.style.left = '0px';
         el.style.top = '0px';
         el.style.transform = 'none';
-        el.style.transformOrigin = '';
-      }
-
-      tabs.forEach(function (tab) {
-        const el = tab._webview;
-        if (!el) return;
-
-        if (!fitLargeScreen) {
-          resetGeometry(el);
-          try { el.setZoomFactor(1); } catch (e) {}
-          last = { mode: 'off' };
-          return;
-        }
-
-        // 清晰模式：按屏幕放大，Flash 实际按更高物理分辨率渲染，文字不发虚
-        if (renderSize === '1920x1080') {
-          resetGeometry(el);
-          const z = Math.max(1, Math.min(4, Math.ceil(Math.max(cw / 1920, ch / 1080) * 8) / 8));
-          try { el.setZoomFactor(z); } catch (e) {}
-          last = { mode: 'crisp', zoom: z };
-          return;
-        }
-
-        // 性能模式：只限制渲染宽度，高度跟随窗口比例（16:10 也不会左右裁切）；1020 是游戏下限
-        const baseW = Math.max(1020, Math.min(target.w, Math.floor(cw) || target.w));
-        const baseH = Math.max(600, Math.round(baseW * ch / cw));
-        const scale = cw / baseW;
-        const dx = (cw - baseW * scale) / 2;
-        const dy = (ch - baseH * scale) / 2;
-
-        el.style.width = baseW + 'px';
-        el.style.height = baseH + 'px';
-        el.style.left = '0px';
-        el.style.top = '0px';
         el.style.transformOrigin = '0 0';
-        el.style.transform = 'translate(' + dx.toFixed(2) + 'px,' + dy.toFixed(2) + 'px) scale(' + scale.toFixed(4) + ')';
-        try { el.setZoomFactor(1); } catch (e) {}
-        last = { mode: 'performance', baseW: baseW, baseH: baseH, scale: scale };
-      });
+      }
+      if (Math.abs((tab._appliedZoom || 0) - t.zoom) > 1e-6) {
+        try {
+          el.setZoomFactor(t.zoom);
+          tab._appliedZoom = t.zoom;
+        } catch (e) { /* guest 尚未附加，dom-ready / did-stop-loading 会再设 */ }
+      }
+      return t;
+    }
 
-      window.__narutoRender = last;
+    function applyRenderConfig() {
+      let active = null;
+      tabs.forEach(function (tab) {
+        const t = paintStage(tab);
+        if (t && tab.id === activeTabId) active = t;
+      });
+      const t = active || computeRenderTarget();
+
+      window.__narutoRender = {
+        stageW: t.stageW,
+        stageH: t.stageH,
+        scale: t.zoom,
+        zoom: t.zoom,
+        cw: t.cw,
+        ch: t.ch,
+        offset: { x: 0, y: 0 },
+        dpr: window.devicePixelRatio
+      };
+    }
+
+    // 校验 guest 的逻辑视口是否等于目标（宽 = 舞台宽度，高按窗口比例）
+    function verifyGuestViewport() {
+      const tab = tabs.find(function (x) { return x.id === activeTabId; }) || tabs[0];
+      if (!tab || !tab._webview) return;
+      const t = computeRenderTarget(tab._stageW);
+      const el = tab._webview;
+      const kick = function () {
+        try { el.executeJavaScript('window.dispatchEvent(new Event("resize"))').catch(function () {}); } catch (e) {}
+      };
+      kick();
+      try {
+        el.executeJavaScript('({w:innerWidth,h:innerHeight})').then(function (r) {
+          if (!r) return;
+          const bad = Math.abs(r.w - t.stageW) > 2 || Math.abs(r.h - t.stageH) > 2;
+          window.__narutoRender = Object.assign({}, window.__narutoRender, {
+            guest: r,
+            expected: { w: t.stageW, h: t.stageH },
+            bad: bad
+          });
+          if (!bad) return;
+          window.gameAPI.debugLog('warn', 'render',
+            'guest 视口未同步 ' + r.w + 'x' + r.h + '，应为 ' + t.stageW + 'x' + t.stageH + '，强制重排');
+          // 缩放没跟上就重新应用一次；再轻推一次高度让页面真正 relayout
+          tab._appliedZoom = 0;
+          paintStage(tab);
+          el.style.height = '99.9%';
+          requestAnimationFrame(function () {
+            el.style.height = '100%';
+            try { el.invalidate(); } catch (e) {}
+          });
+          setTimeout(kick, 120);
+          if (guestCheckRetries < 2) {
+            guestCheckRetries++;
+            setTimeout(function () {
+              if (!guestCheckTimer) verifyGuestViewport();
+            }, 420);
+          }
+        }).catch(function () {});
+      } catch (e) {}
     }
 
     window.addEventListener('resize', syncGuestResize);
@@ -2345,7 +2734,6 @@
           if (cancel) cancel.click(); else modal.remove();
           return;
         }
-        if (moreMenu && moreMenu.classList.contains('open')) { closeMoreMenu(); return; }
         if (openSidebar) { setSidebar(null); return; }
         if (dragState) {
           cleanupDragPlaceholder();
@@ -2366,7 +2754,7 @@
       if (action === 'toggle-accounts') { setSidebar('accounts'); return; }
       if (action === 'refresh') { try { window.gameAPI.refreshPage(); } catch (err) {} return; }
       if (action === 'mute') { toggleMute(); return; }
-      if (action === 'more') { openMoreMenu(); return; }
+      if (action === 'more') { setSidebar('more'); return; }
       if (action === 'fullscreen') { ipcRenderer.send('toggle-fullscreen'); return; }
       if (action === 'close-window') { try { window.gameAPI.closeWindow(); } catch (err) {} }
     });

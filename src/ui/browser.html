@@ -90,6 +90,11 @@
     ipcRenderer.on('fullscreen-changed', function (e, on) {
       document.body.classList.toggle('fullscreen', !!on);
     });
+    ipcRenderer.on('window-state', function (e, s) {
+      var max = !!(s && s.maximized) && !(s && s.fullscreen);
+      var btn = document.getElementById('btnMax');
+      if (btn) btn.title = max ? '还原' : '最大化';
+    });
   </script>
 </body>
 </html>
